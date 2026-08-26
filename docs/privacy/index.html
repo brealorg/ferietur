@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personvernerklæring for Ferietur</title>
+  <meta name="description" content="Personvernerklæring for Android-appen Ferietur.">
+  <style>
+    :root { --blue:#2A2859; --yellow:#F9C66B; --ink:#202124; --muted:#5f6368; --line:#dedede; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:820px; margin:0 auto; padding:48px 22px 80px; }
+    header { border-top:10px solid var(--yellow); padding-top:28px; }
+    h1,h2 { color:var(--blue); line-height:1.25; }
+    h1 { font-size:clamp(2rem,5vw,3rem); margin:.1em 0 .2em; }
+    h2 { margin-top:2em; font-size:1.35rem; }
+    p,li { max-width:75ch; }
+    .meta { color:var(--muted); }
+    .summary { border-left:5px solid var(--yellow); background:#fff8e7; padding:16px 18px; margin:28px 0; }
+    code { background:#f4f4f6; padding:.08em .3em; border-radius:4px; }
+    a { color:var(--blue); }
+    footer { border-top:1px solid var(--line); margin-top:48px; padding-top:20px; color:var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Personvernerklæring for Ferietur</h1>
+  <p class="meta"><strong>Sist oppdatert:</strong> 26. august 2026</p>
+  <p>Denne personvernerklæringen gjelder Android-appen <strong>Ferietur</strong> (<code>app.ferietur</code>).</p>
+  <p>Ferietur er et uavhengig planleggings- og beregningsverktøy for bemannede ferieopphold. Appen er ikke en offisiell app fra Oslo kommune eller andre offentlige myndigheter.</p>
+</header>
+
+<section class="summary">
+  <strong>Kort fortalt</strong>
+  <ul>
+    <li>Ingen brukerkonto eller innlogging.</li>
+    <li>Ferietur har ingen annonser, analyseverktøy eller sporing.</li>
+    <li>Ingen tredjeparts analyse-, reklame- eller sporings-SDK-er.</li>
+    <li>Ingen Android-tillatelse for internettilgang.</li>
+    <li>Tur- og beregningsopplysninger sendes ikke automatisk til utvikleren eller en server.</li>
+    <li>Lokal appdata lagres i Androids app-private lagringsområde.</li>
+  </ul>
+</section>
+
+<h2>Opplysninger som kan behandles lokalt</h2>
+<p>Ferietur behandler opplysninger som brukeren selv registrerer for å planlegge og beregne en tur. Dette kan blant annet omfatte:</p>
+<ul>
+  <li>tittel på turen</li><li>datoer og tidsperioder</li><li>reise- og arbeidstid</li>
+  <li>turnus- og arbeidsplanopplysninger</li><li>lønnstrinn og andre lønns-/beregningsvalg</li>
+  <li>opplysninger om ansvar, arbeidstype og betalingsmodell</li><li>beregningsresultater og genererte PDF-er</li>
+</ul>
+<p>Opplysningene kan være personopplysninger dersom brukeren selv legger inn opplysninger som kan knyttes til en bestemt person. Ferietur krever ikke at navn eller andre direkte identifikatorer registreres.</p>
+
+<h2>Innsamling</h2>
+<p>Ferietur samler ikke inn tur-, lønns- eller beregningsopplysninger til utvikleren eller en ekstern tjeneste.</p>
+<p>Appen har ikke innebygd analyse, reklame eller sporing, og har ikke Android-tillatelsen <code>INTERNET</code>.</p>
+
+<h2>Deling og eksport</h2>
+<p>Ferietur deler ikke data automatisk.</p>
+<p>Når brukeren selv velger å eksportere eller dele en PDF, åpnes Androids delingsfunksjon. Filen deles bare med appen eller mottakeren brukeren selv velger. Ferietur gir da midlertidig tilgang til den valgte eksportfilen gjennom Androids FileProvider-mekanisme.</p>
+<p>Utvikleren mottar ikke PDF-en gjennom Ferietur.</p>
+
+<h2>Tilbakemelding til utvikleren</h2>
+<p>Hvis brukeren velger <strong>Send tilbakemelding</strong>, åpner Ferietur brukerens egen e-postapp med mottaker og emne utfylt. Ferietur sender ikke e-post automatisk og legger ikke ved tur-, lønns- eller beregningsdata automatisk.</p>
+<p>Hvis brukeren velger å sende e-post, behandles e-postadressen og innholdet i meldingen som vanlig korrespondanse for å kunne svare på henvendelsen. Slik korrespondanse oppbevares bare så lenge det er nødvendig for oppfølging, dokumentasjon eller sikkerhet.</p>
+
+<h2>Åpning av personvernerklæringen</h2>
+<p>Når brukeren velger å åpne denne personvernerklæringen fra appen, åpnes adressen i brukerens valgte nettleser. Personvernerklæringen er publisert med GitHub Pages.</p>
+<p>Ingen tur-, lønns- eller beregningsopplysninger legges i nettadressen eller sendes fra Ferietur til nettsiden. Nettleseren og GitHub kan behandle vanlig teknisk nettverksinformasjon ved visning av nettsiden etter sine egne vilkår.</p>
+
+<h2>Lagring og sikkerhet</h2>
+<p>Ferieturs lokale data lagres i Androids app-private lagringsområde.</p>
+<ul>
+  <li>andre apper får ikke ordinær tilgang til appens private filer</li>
+  <li>Android-backup og enhetsoverføring er deaktivert for Ferietur</li>
+  <li>eksporterte filer deles bare etter en eksplisitt brukerhandling</li>
+  <li>Ferietur har ingen egen skylagring eller ekstern database</li>
+</ul>
+
+<h2>Oppbevaring og sletting</h2>
+<p>Lokale turer og utkast oppbevares til brukeren selv sletter dem i appen eller avinstallerer Ferietur.</p>
+<p>Ved avinstallasjon fjerner Android appens private lokale data. PDF-er eller andre filer som brukeren har eksportert eller lagret utenfor appens private område, er separate filer og må eventuelt slettes der de er lagret.</p>
+<p>Ferietur har ingen brukerkonto og lagrer derfor ingen kontodata som må slettes hos utvikleren.</p>
+
+<h2>Tredjeparter</h2>
+<p>Ferietur bruker ikke tredjeparts analyse-, reklame- eller sporings-SDK-er.</p>
+<p>Når brukeren selv velger å åpne en nettleser, sende e-post eller dele en PDF til en annen app, gjelder personvernvilkårene til den valgte tredjepartstjenesten for den videre behandlingen.</p>
+
+<h2>Endringer</h2>
+<p>Denne personvernerklæringen kan oppdateres dersom Ferietur endrer funksjonalitet eller databehandling. Gjeldende versjon publiseres på denne siden.</p>
+
+<h2>Kontakt</h2>
+<ul>
+  <li>App: <strong>Ferietur</strong></li>
+  <li>Pakkenavn: <code>app.ferietur</code></li>
+  <li>Personvernkontakt: <a href="mailto:enaasen@gmail.com">enaasen@gmail.com</a></li>
+</ul>
+<footer><p><a href="https://github.com/brealorg/ferietur">Ferietur på GitHub</a></p></footer>
+</main>
+</body>
+</html>
