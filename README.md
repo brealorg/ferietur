@@ -11,7 +11,7 @@
 ![Package](https://img.shields.io/badge/package-app.ferietur-2A2859?style=flat-square)
 ![Data](https://img.shields.io/badge/data-local_only-F9C66B?style=flat-square)
 
-[**Last ned siste versjon**](https://github.com/brealorg/ferietur/releases/latest) · [Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.4) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
+[**Last ned siste versjon**](https://github.com/brealorg/ferietur/releases/latest) · [Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.4) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
 </div>
 
@@ -65,6 +65,8 @@ Ferietur er laget for lokal bruk:
 - Android-backup og enhetsoverføring er deaktivert
 - eksporterte PDF-er deles bare når brukeren selv velger å dele dem
 - det kreves ingen konto eller innlogging
+
+[**Les personvernerklæringen**](https://brealorg.github.io/ferietur/privacy/)
 
 ## Last ned
 
