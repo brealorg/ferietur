@@ -37,6 +37,28 @@ Målet er ikke bare å produsere et sluttbeløp, men å gjøre det synlig **hva 
 - lager PDF med beregning, forutsetninger og regelinformasjon
 - lar brukeren gå tilbake og kontrollere grunnlaget før noe ferdigstilles
 
+<!-- FERIETUR_SCREENSHOTS_START -->
+## Skjermbilder
+
+Ekte skjermbilder fra Ferietur på Android.
+
+<p align="center">
+  <img src="assets/screenshots/01-mine-turer.png" width="30%" alt="Mine turer med pågående tur og tur klar for eksport">
+  <img src="assets/screenshots/02-turen.png" width="30%" alt="Turoppsett med datoer og reisetider">
+  <img src="assets/screenshots/03-arbeidsplan.png" width="30%" alt="Arbeidsplan med arbeid, natt og reise">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/04-beregning.png" width="30%" alt="Beregning med forklarbare beløpsposter">
+  <img src="assets/screenshots/05-sporbart-grunnlag.png" width="30%" alt="Detaljert beregningsgrunnlag med timer, kilder og regler">
+  <img src="assets/screenshots/06-kontroll.png" width="30%" alt="Kontroll av forhold som bør vurderes">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/07-oppsummering.png" width="30%" alt="Oppsummering og eksport av dokumentasjon">
+</p>
+<!-- FERIETUR_SCREENSHOTS_END -->
+
 ## Typisk arbeidsflyt
 
 1. **Opprett turen** – datoer, reiseforløp og grunnoppsett.
