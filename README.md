@@ -11,7 +11,11 @@
 ![Package](https://img.shields.io/badge/package-app.ferietur-2A2859?style=flat-square)
 ![Data](https://img.shields.io/badge/data-local_only-F9C66B?style=flat-square)
 
-[**Last ned siste versjon**](https://github.com/brealorg/ferietur/releases/latest) · [Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.5) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
+## [⬇ Last ned Ferietur 0.5.5](https://github.com/brealorg/ferietur/releases/download/v0.5.5/Ferietur-0.5.5.apk)
+
+**Android APK · Android 8.0 eller nyere**
+
+[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.5) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
 </div>
 
@@ -90,15 +94,17 @@ Ferietur er laget for lokal bruk:
 
 [**Les personvernerklæringen**](https://brealorg.github.io/ferietur/privacy/)
 
-## Last ned
+## Last ned Ferietur
 
-Siste publiserte produksjonsversjon er **Ferietur 0.5.5** (`versionCode 52`).
+### Android APK — 0.5.5
 
-- [**Ferietur-0.5.5.apk**](https://github.com/brealorg/ferietur/releases/download/v0.5.5/Ferietur-0.5.5.apk)
-- [Komplett Android-pakke](https://github.com/brealorg/ferietur/releases/download/v0.5.5/Ferietur-0.5.5-Android.zip)
-- [Alle releases](https://github.com/brealorg/ferietur/releases)
+[**⬇ Last ned Ferietur-0.5.5.apk**](https://github.com/brealorg/ferietur/releases/download/v0.5.5/Ferietur-0.5.5.apk)
 
-**Krav:** Android 8.0 eller nyere (API 26+).
+**Android 8.0 eller nyere (API 26+)** · `versionCode 52` · permanent signert produksjonsutgave
+
+Har du allerede Ferietur installert, kan `0.5.5` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
+
+[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.5) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
 
 > Google Play-distribusjon er under klargjøring. Inntil videre er den signerte APK-en den publiserte distribusjonskanalen.
 
