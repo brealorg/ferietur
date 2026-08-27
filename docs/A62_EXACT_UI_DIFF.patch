@@ -1,0 +1,410 @@
+--- A61/FerieturApp.kt
++++ A62/FerieturApp.kt
+@@ -4918,8 +4918,15 @@
+     val context = LocalContext.current
+     if (snapshot == null) {
+         LazyColumn(
+-            modifier = Modifier.fillMaxSize().padding(padding),
+-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
++            modifier = Modifier
++                .fillMaxSize()
++                .padding(padding),
++            contentPadding = PaddingValues(
++                start = 20.dp,
++                end = 20.dp,
++                top = 12.dp,
++                bottom = 24.dp,
++            ),
+             verticalArrangement = Arrangement.spacedBy(14.dp),
+         ) {
+             item { ScreenHeader("Oppsummering og eksport", stepLabel, onBack) }
+@@ -4933,12 +4940,29 @@
+         }
+         return
+     }
++
++    val reviewCount = snapshot.findings.count {
++        it.severity == FindingSeverity.REVIEW ||
++            it.severity == FindingSeverity.CRITICAL
++    }
++    val registrationOk =
++        snapshot.calculation.rosterUncoveredMinutes == 0L ||
++            snapshot.rosterGapConfirmed
++
+     LazyColumn(
+-        modifier = Modifier.fillMaxSize().padding(padding),
+-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
++        modifier = Modifier
++            .fillMaxSize()
++            .padding(padding),
++        contentPadding = PaddingValues(
++            start = 20.dp,
++            end = 20.dp,
++            top = 12.dp,
++            bottom = 24.dp,
++        ),
+         verticalArrangement = Arrangement.spacedBy(14.dp),
+     ) {
+         item { ScreenHeader("Oppsummering og eksport", stepLabel, onBack) }
++
+         if (snapshot.employerKind != EmployerKind.OSLO_KOMMUNE) {
+             item {
+                 InlineMessage(
+@@ -4955,85 +4979,247 @@
+                 )
+             }
+         }
++
+         item {
+-            Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.primaryContainer) {
+-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
++            Surface(
++                shape = MaterialTheme.shapes.extraLarge,
++                color = MaterialTheme.colorScheme.primaryContainer,
++            ) {
++                Column(
++                    Modifier.padding(22.dp),
++                    verticalArrangement = Arrangement.spacedBy(8.dp),
++                ) {
+                     Text(
+                         when {
+-                            snapshot.employerKind != EmployerKind.OSLO_KOMMUNE -> "Foreløpig regnegrunnlag"
+-                            snapshot.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER -> "Beløp som kommer i tillegg til grunnturnusen"
+-                            snapshot.isRuleBasisConfirmed -> "Beregnet lønn og godtgjøring"
+-                            else -> "Foreløpig regnegrunnlag"
++                            snapshot.employerKind != EmployerKind.OSLO_KOMMUNE ->
++                                "Foreløpig regnegrunnlag"
++                            snapshot.rosterComparisonMode ==
++                                RosterComparisonMode.USE_NORMAL_ROSTER ->
++                                "Beløp som kommer i tillegg til grunnturnusen"
++                            snapshot.isRuleBasisConfirmed ->
++                                "Beregnet lønn og godtgjøring"
++                            else ->
++                                "Foreløpig regnegrunnlag"
+                         },
+                         style = MaterialTheme.typography.labelLarge,
+                     )
+-                    Text(currency(snapshot.calculation.paymentBasisAmount), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
++                    Text(
++                        currency(snapshot.calculation.paymentBasisAmount),
++                        style = MaterialTheme.typography.displaySmall,
++                        fontWeight = FontWeight.Black,
++                    )
+                     Text(
+                         if (snapshot.settlement.usesFullCalculation) {
+-                            "Betalingsforslaget følger det beregnede betalingsgrunnlaget."
++                            "Betalingsforslaget følger beregningen."
+                         } else {
+-                            "Betalingsforslag: ${currency(snapshot.settlement.proposedAmount)} · forskjell ${currency(snapshot.calculation.paymentBasisAmount.subtract(snapshot.settlement.proposedAmount))}."
++                            "Betalingsforslag ${currency(snapshot.settlement.proposedAmount)} · " +
++                                "forskjell ${
++                                    currency(
++                                        snapshot.calculation.paymentBasisAmount
++                                            .subtract(snapshot.settlement.proposedAmount),
++                                    )
++                                }."
+                         },
+                         color = MaterialTheme.colorScheme.onPrimaryContainer,
+                     )
+                 }
+             }
+         }
+-        item { SectionTitle("Status") }
++
++        // Google Material button hierarchy: one high-emphasis primary action,
++        // with the alternative export as an outlined medium-emphasis action.
++        item { MethodSectionHeading("Eksporter") }
++
+         item {
+-            val reviewCount = snapshot.findings.count { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
++            Button(
++                onClick = {
++                    PdfExporter.share(
++                        context,
++                        snapshot,
++                        PdfExporter.Variant.SHORT,
++                    )
++                },
++                modifier = Modifier.fillMaxWidth(),
++            ) {
++                Text("Lag og del kort oppsummering")
++            }
++        }
++
++        item {
++            OutlinedButton(
++                onClick = {
++                    PdfExporter.share(
++                        context,
++                        snapshot,
++                        PdfExporter.Variant.FULL,
++                    )
++                },
++                modifier = Modifier.fillMaxWidth(),
++            ) {
++                Text("Lag og del fullt beregningsgrunnlag")
++            }
++        }
++
++        item {
++            Text(
++                "Fullt grunnlag inkluderer grunnturnus når relevant, arbeidsplan, " +
++                    "beregningsspesifikasjon, dag-for-dag-kontroll, " +
++                    "arbeidstidsvarsler, regler, kilder, satser og versjoner.",
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
++        }
++
++        item { MethodSectionHeading("Status") }
++
++        item {
+             Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+-                val rows = buildList<Pair<Boolean, String>> {
+-                    add((snapshot.employerKind != EmployerKind.UNSPECIFIED) to "Arbeidsgiver: ${employerLabel(snapshot.employerKind)}")
+-                    add(true to "Betalingsscenario: ${payingPartyLabel(snapshot.payingParty)}")
+-                    add(snapshot.isRuleBasisConfirmed to "Regler og beregningsgrunnlag: ${snapshot.ruleBasis}")
+-                    add(snapshot.payslipChecked to "Lønnsopplysninger kontrollert mot nyere lønnsslipp")
+-                    add(true to "Ingen registreringsfeil er med i det ferdigstilte grunnlaget")
+-                    if (snapshot.calculation.rosterUncoveredMinutes > 0L) add(snapshot.rosterGapConfirmed to "Turnustid uten registrert arbeidsperiode er kontrollert")
+-                    add((reviewCount == 0) to if (reviewCount == 0) "Ingen arbeidstidsforhold er flagget" else "$reviewCount arbeidstidsforhold bør vurderes")
+-                    add(snapshot.unresolvedRules.isEmpty() to if (snapshot.unresolvedRules.isEmpty()) "Ingen beregningsregler står åpne" else "${snapshot.unresolvedRules.size} beregningsregler må fortsatt avklares")
+-                }
+-                rows.forEachIndexed { index, row ->
+-                    StatusRow(row.first, row.second)
+-                    if (index != rows.lastIndex) HorizontalDivider(modifier = Modifier.padding(start = 34.dp))
+-                }
+-            }
+-        }
++                FinalSummaryStatusRow(
++                    label = "Arbeidsgiver",
++                    value = employerLabel(snapshot.employerKind),
++                    resolved = snapshot.employerKind != EmployerKind.UNSPECIFIED,
++                )
++                HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
++
++                FinalSummaryStatusRow(
++                    label = "Betalingsscenario",
++                    value = payingPartyLabel(snapshot.payingParty),
++                    resolved = snapshot.payingParty != PayingParty.UNSPECIFIED,
++                    informationalWhenOpen = true,
++                )
++                HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
++
++                FinalSummaryStatusRow(
++                    label = "Lønnsopplysninger",
++                    value = if (snapshot.payslipChecked) {
++                        "Kontrollert"
++                    } else {
++                        "Må kontrolleres"
++                    },
++                    resolved = snapshot.payslipChecked,
++                )
++                HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
++
++                FinalSummaryStatusRow(
++                    label = "Beregningsregler",
++                    value = if (snapshot.unresolvedRules.isEmpty()) {
++                        "Ingen åpne"
++                    } else {
++                        "${snapshot.unresolvedRules.size} må avklares"
++                    },
++                    resolved = snapshot.unresolvedRules.isEmpty(),
++                )
++                HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
++
++                FinalSummaryStatusRow(
++                    label = "Registrering",
++                    value = when {
++                        snapshot.calculation.rosterUncoveredMinutes == 0L ->
++                            "Ingen feil"
++                        snapshot.rosterGapConfirmed ->
++                            "Kontrollert"
++                        else ->
++                            "Må kontrolleres"
++                    },
++                    resolved = registrationOk,
++                )
++            }
++        }
++
++        if (reviewCount > 0) {
++            item {
++                ListItem(
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .clickable(onClick = onBack),
++                    leadingContent = {
++                        Icon(
++                            Icons.Rounded.Warning,
++                            contentDescription = null,
++                            tint = MaterialTheme.colorScheme.secondary,
++                        )
++                    },
++                    supportingContent = {
++                        Text(
++                            "Se kontrollpunktene før dokumentet brukes.",
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    },
++                    trailingContent = {
++                        Icon(
++                            Icons.Rounded.ChevronRight,
++                            contentDescription = "Tilbake til Kontroll",
++                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    },
++                    content = {
++                        Text(
++                            "$reviewCount arbeidstidsforhold bør vurderes",
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                    },
++                )
++            }
++        }
++
++        item { MethodSectionHeading("Dokumentasjon") }
++
+         if (!snapshot.settlement.usesFullCalculation) {
+             item {
+-                CompactInfoCard(
+-                    title = "Avtalt betalingsforslag avviker fra betalingsgrunnlaget",
+-                    body = "Beregnet betalingsgrunnlag: ${currency(snapshot.calculation.paymentBasisAmount)} · foreslått: ${currency(snapshot.settlement.proposedAmount)}. Begrunnelse: ${snapshot.settlement.reason}",
+-                )
+-            }
+-        }
++                ListItem(
++                    leadingContent = {
++                        Icon(
++                            Icons.Rounded.Info,
++                            contentDescription = null,
++                            tint = MaterialTheme.colorScheme.secondary,
++                        )
++                    },
++                    supportingContent = {
++                        Text(
++                            "Avtalt ${currency(snapshot.settlement.proposedAmount)} · " +
++                                "beregnet ${currency(snapshot.calculation.paymentBasisAmount)}. " +
++                                snapshot.settlement.reason,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                            maxLines = 3,
++                            overflow = TextOverflow.Ellipsis,
++                        )
++                    },
++                    content = {
++                        Text(
++                            "Avtalt betalingsforslag",
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                    },
++                )
++            }
++        }
++
+         if (snapshot.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+             item {
+-                CompactInfoCard(
+-                    title = "Grunnturnusen følger med i fullt grunnlag",
+-                    body = "PDF-en tar med et snapshot av grunnturnusen og sammenstiller den med arbeidsplanen på turen. Grunnturnustid som overlapper turen: ${minutesUi(snapshot.calculation.rosterMinutes)}.",
+-                )
+-            }
+-        }
+-        item { SectionTitle("PDF") }
+-        item {
+-            FilledTonalButton(
+-                onClick = { PdfExporter.share(context, snapshot, PdfExporter.Variant.SHORT) },
+-                modifier = Modifier.fillMaxWidth(),
+-            ) { Text("Lag og del kort oppsummering") }
+-        }
+-        item {
+-            Button(
+-                onClick = { PdfExporter.share(context, snapshot, PdfExporter.Variant.FULL) },
+-                modifier = Modifier.fillMaxWidth(),
+-            ) { Text("Lag og del fullt beregningsgrunnlag") }
+-        }
+-        item {
+-            CompactInfoCard(
+-                title = "Fullt beregningsgrunnlag",
+-                body = "Inneholder betalingsforslag, valgt beregningsmåte, grunnturnus når den er relevant, arbeidsplan, full beregningsspesifikasjon, dag-for-dag kontroll, arbeidstidsvarsler, åpne regler, kilder, satser og versjoner.",
+-            )
+-        }
++                ListItem(
++                    leadingContent = {
++                        Icon(
++                            Icons.Rounded.Info,
++                            contentDescription = null,
++                            tint = MaterialTheme.colorScheme.secondary,
++                        )
++                    },
++                    supportingContent = {
++                        Text(
++                            "${minutesUi(snapshot.calculation.rosterMinutes)} overlapper turen.",
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    },
++                    content = {
++                        Text(
++                            "Grunnturnusen følger med i fullt grunnlag",
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                    },
++                )
++            }
++        }
++
+         item {
+             Text(
+                 "Beregning-ID: ${snapshot.id}",
+@@ -5041,6 +5227,51 @@
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+             )
+         }
++    }
++}
++
++@Composable
++private fun FinalSummaryStatusRow(
++    label: String,
++    value: String,
++    resolved: Boolean,
++    informationalWhenOpen: Boolean = false,
++) {
++    Row(
++        modifier = Modifier
++            .fillMaxWidth()
++            .padding(vertical = 10.dp),
++        horizontalArrangement = Arrangement.spacedBy(10.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        Icon(
++            when {
++                resolved -> Icons.Rounded.CheckCircle
++                informationalWhenOpen -> Icons.Rounded.Info
++                else -> Icons.Rounded.Warning
++            },
++            contentDescription = null,
++            tint = when {
++                resolved -> MaterialTheme.colorScheme.primary
++                informationalWhenOpen -> MaterialTheme.colorScheme.secondary
++                else -> MaterialTheme.colorScheme.error
++            },
++            modifier = Modifier.size(20.dp),
++        )
++        Text(
++            label,
++            modifier = Modifier.weight(1f),
++            style = MaterialTheme.typography.bodyMedium,
++        )
++        Text(
++            value,
++            modifier = Modifier.widthIn(max = 170.dp),
++            style = MaterialTheme.typography.bodyMedium,
++            fontWeight = FontWeight.SemiBold,
++            color = MaterialTheme.colorScheme.onSurfaceVariant,
++            maxLines = 2,
++            overflow = TextOverflow.Ellipsis,
++        )
+     }
+ }
+ 

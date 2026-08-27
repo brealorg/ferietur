@@ -1,0 +1,783 @@
+--- A60R4/FerieturApp.kt
++++ A61/FerieturApp.kt
+@@ -4237,70 +4237,675 @@
+     val blocks = TripPlanEngine.projectRange(dates, plans)
+     val unresolved = settlementSummary.unresolvedRuleCount
+     val findings = TripPlanEngine.controlFindings(blocks, unresolved, roster)
+-    val reviewCount = findings.count { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
++    val reviewCount = findings.count {
++        it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL
++    }
+     val groupedFindings = groupControlFindings(findings)
+-    var expandedGroups by remember { mutableStateOf(setOf<String>()) }
++        .filter { it.severity != FindingSeverity.OK }
++
++    var selectedGroupTitle by remember { mutableStateOf<String?>(null) }
++    var selectedFindingIndex by remember { mutableStateOf<Int?>(null) }
++
++    selectedGroupTitle?.let { title ->
++        groupedFindings.firstOrNull { it.title == title }?.let { group ->
++            ControlFindingGroupSheet(
++                group = group,
++                selectedFindingIndex = selectedFindingIndex,
++                onSelectFinding = { selectedFindingIndex = it },
++                onBackToGroup = { selectedFindingIndex = null },
++                onDismiss = {
++                    selectedFindingIndex = null
++                    selectedGroupTitle = null
++                },
++            )
++        }
++    }
+ 
+     LazyColumn(
+-        modifier = Modifier.fillMaxSize().padding(padding),
+-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
++        modifier = Modifier
++            .fillMaxSize()
++            .padding(padding),
++        contentPadding = PaddingValues(
++            start = 20.dp,
++            end = 20.dp,
++            top = 12.dp,
++            bottom = 24.dp,
++        ),
+         verticalArrangement = Arrangement.spacedBy(12.dp),
+     ) {
+         item { ScreenHeader("Kontroll", stepLabel, onBack) }
++
+         if (employerKind != EmployerKind.OSLO_KOMMUNE) {
+-            item { InlineMessage(FindingSeverity.OPEN, "Foreløpig grunnlag", "Arbeidsgiverforholdet er ikke bekreftet som Oslo kommune. Kontroll og beløp kan brukes til dokumentasjon, men endelig regelgrunnlag og samlet kostnad må avklares.") }
+-        }
++            item {
++                InlineMessage(
++                    FindingSeverity.OPEN,
++                    "Foreløpig grunnlag",
++                    "Arbeidsgiverforholdet er ikke bekreftet som Oslo kommune. Kontroll og beløp kan brukes til dokumentasjon, men endelig regelgrunnlag og samlet kostnad må avklares.",
++                )
++            }
++        }
++
+         item {
+-            CompactInfoCard(
+-                title = if (settlementSummary.usesFullCalculation) "Betalingsforslaget følger betalingsgrunnlaget" else "Betalingsforslaget avviker fra betalingsgrunnlaget",
+-                body = if (settlementSummary.usesFullCalculation) "Beregnet betalingsgrunnlag og foreslått beløp: ${currency(settlementSummary.calculatedAmount)}." else "Beregnet betalingsgrunnlag: ${currency(settlementSummary.calculatedAmount)} · betalingsforslag: ${currency(settlementSummary.proposedAmount)}. Begrunnelse: ${settlementSummary.reason}",
+-            )
+-        }
++            ControlSettlementStatusRow(settlementSummary)
++        }
++
+         if (rosterGapEvidence.isNotEmpty()) {
+             item {
+                 val gapMinutes = rosterGapEvidence.sumOf { it.minutes }
+-                InlineMessage(
+-                    FindingSeverity.REVIEW,
+-                    "Turnustid uten registrert arbeidsperiode",
+-                    buildString {
+-                        append("${minutesUi(gapMinutes)} i grunnturnusen har ingen registrert arbeidsperiode på turen.")
+-                        rosterGapEvidence.firstOrNull()?.let { first -> append(" Første tidsrom er ${fullDate(first.start.toLocalDate())} kl. ${timeFormat.format(first.start.toLocalTime())}–${timeFormat.format(first.end.toLocalTime())}.") }
+-                        append(" Kontroller at dette er riktig før grunnlaget ferdigstilles.")
++                Surface(
++                    modifier = Modifier.fillMaxWidth(),
++                    shape = MaterialTheme.shapes.large,
++                    color = MaterialTheme.colorScheme.surfaceContainerLow,
++                    border = androidx.compose.foundation.BorderStroke(
++                        1.dp,
++                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
++                    ),
++                ) {
++                    Column(
++                        modifier = Modifier.padding(14.dp),
++                        verticalArrangement = Arrangement.spacedBy(10.dp),
++                    ) {
++                        Row(
++                            horizontalArrangement = Arrangement.spacedBy(10.dp),
++                            verticalAlignment = Alignment.Top,
++                        ) {
++                            Icon(
++                                Icons.Rounded.Warning,
++                                contentDescription = null,
++                                tint = MaterialTheme.colorScheme.secondary,
++                            )
++                            Column(
++                                modifier = Modifier.weight(1f),
++                                verticalArrangement = Arrangement.spacedBy(3.dp),
++                            ) {
++                                Text(
++                                    "Turnustid uten registrert arbeidsperiode",
++                                    fontWeight = FontWeight.SemiBold,
++                                )
++                                Text(
++                                    "${minutesUi(gapMinutes)} i grunnturnusen mangler arbeidsperiode på turen.",
++                                    style = MaterialTheme.typography.bodySmall,
++                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                )
++                            }
++                        }
++
++                        Row(
++                            modifier = Modifier
++                                .fillMaxWidth()
++                                .clickable {
++                                    onRosterGapConfirmed(!rosterGapConfirmed)
++                                },
++                            horizontalArrangement = Arrangement.spacedBy(10.dp),
++                            verticalAlignment = Alignment.CenterVertically,
++                        ) {
++                            Checkbox(
++                                checked = rosterGapConfirmed,
++                                onCheckedChange = onRosterGapConfirmed,
++                            )
++                            Text(
++                                "Jeg har kontrollert at dette er riktig registrert",
++                                modifier = Modifier.weight(1f),
++                                style = MaterialTheme.typography.bodyMedium,
++                            )
++                        }
++                    }
++                }
++            }
++        }
++
++        item {
++            Text(
++                if (reviewCount == 0) {
++                    "Ingen forhold krever særskilt vurdering"
++                } else {
++                    "$reviewCount forhold bør vurderes"
++                },
++                style = MaterialTheme.typography.headlineSmall,
++                fontWeight = FontWeight.ExtraBold,
++            )
++        }
++
++        if (groupedFindings.isEmpty()) {
++            item {
++                ListItem(
++                    leadingContent = {
++                        Icon(
++                            Icons.Rounded.CheckCircle,
++                            contentDescription = null,
++                            tint = MaterialTheme.colorScheme.primary,
++                        )
+                     },
+-                )
+-            }
++                    supportingContent = {
++                        Text(
++                            "Den registrerte planen utløser ingen av kontrollkategoriene.",
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    },
++                    content = {
++                        Text(
++                            "Ingen åpenbare arbeidstidsvarsler",
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                    },
++                )
++            }
++        } else {
++            itemsIndexed(groupedFindings, key = { _, group -> group.title }) { index, group ->
++                ControlFindingSummaryRow(
++                    group = group,
++                    onClick = {
++                        selectedGroupTitle = group.title
++                        selectedFindingIndex = if (group.findings.size == 1) 0 else null
++                    },
++                )
++                if (index != groupedFindings.lastIndex) {
++                    HorizontalDivider(modifier = Modifier.padding(start = 46.dp))
++                }
++            }
++        }
++
++        if (settlementSummary.unresolvedRules.isNotEmpty()) {
+             item {
+-                Row(
+-                    Modifier.fillMaxWidth().clickable { onRosterGapConfirmed(!rosterGapConfirmed) }.padding(vertical = 4.dp),
+-                    verticalAlignment = Alignment.CenterVertically,
+-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
++                MethodSectionHeading("Regler som må avklares")
++            }
++            items(
++                settlementSummary.unresolvedRules,
++                key = { "control-rule-${it.id}" },
++            ) { rule ->
++                RuleCompactCard(rule.title, rule.source)
++            }
++        }
++
++        item {
++            Row(
++                modifier = Modifier.padding(top = 4.dp),
++                horizontalArrangement = Arrangement.spacedBy(10.dp),
++                verticalAlignment = Alignment.Top,
++            ) {
++                Icon(
++                    Icons.Rounded.Info,
++                    contentDescription = null,
++                    tint = MaterialTheme.colorScheme.secondary,
++                    modifier = Modifier.size(20.dp),
++                )
++                Text(
++                    "Kontrollen peker på forhold som bør vurderes. Den avgjør ikke om arbeidstidsordningen er juridisk godkjent.",
++                    style = MaterialTheme.typography.bodySmall,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                )
++            }
++        }
++    }
++}
++
++@Composable
++private fun ControlSettlementStatusRow(
++    settlementSummary: SettlementSummary,
++) {
++    val followsCalculation = settlementSummary.usesFullCalculation
++    ListItem(
++        leadingContent = {
++            Icon(
++                if (followsCalculation) {
++                    Icons.Rounded.CheckCircle
++                } else {
++                    Icons.Rounded.Info
++                },
++                contentDescription = null,
++                tint = if (followsCalculation) {
++                    MaterialTheme.colorScheme.primary
++                } else {
++                    MaterialTheme.colorScheme.secondary
++                },
++            )
++        },
++        supportingContent = {
++            Text(
++                if (followsCalculation) {
++                    "Følger beregningen"
++                } else {
++                    "Avviker fra beregnet grunnlag ${currency(settlementSummary.calculatedAmount)}"
++                },
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
++        },
++        content = {
++            Text(
++                "Betalingsforslag · ${currency(settlementSummary.proposedAmount)}",
++                fontWeight = FontWeight.SemiBold,
++            )
++        },
++    )
++}
++
++@Composable
++private fun ControlFindingSummaryRow(
++    group: ControlFindingGroup,
++    onClick: () -> Unit,
++) {
++    val icon = controlFindingIcon(group.severity)
++    val tint = controlFindingTint(group.severity)
++    val supporting = controlGroupSupportingText(group)
++
++    ListItem(
++        modifier = Modifier
++            .fillMaxWidth()
++            .clickable(onClick = onClick),
++        leadingContent = {
++            Icon(
++                icon,
++                contentDescription = null,
++                tint = tint,
++                modifier = Modifier.size(20.dp),
++            )
++        },
++        supportingContent = {
++            Text(
++                supporting,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                maxLines = 2,
++                overflow = TextOverflow.Ellipsis,
++            )
++        },
++        trailingContent = {
++            Icon(
++                Icons.Rounded.ChevronRight,
++                contentDescription = "Vis detaljer",
++                tint = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
++        },
++        content = {
++            Text(
++                group.title,
++                fontWeight = FontWeight.SemiBold,
++            )
++        },
++    )
++}
++
++@OptIn(ExperimentalMaterial3Api::class)
++@Composable
++private fun ControlFindingGroupSheet(
++    group: ControlFindingGroup,
++    selectedFindingIndex: Int?,
++    onSelectFinding: (Int) -> Unit,
++    onBackToGroup: () -> Unit,
++    onDismiss: () -> Unit,
++) {
++    val sheetState = rememberBottomSheetState(
++        initialValue = SheetValue.Hidden,
++        enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
++    )
++    val selectedFinding = selectedFindingIndex?.let(group.findings::getOrNull)
++
++    ModalBottomSheet(
++        onDismissRequest = onDismiss,
++        sheetState = sheetState,
++    ) {
++        if (selectedFinding == null) {
++            LazyColumn(
++                contentPadding = PaddingValues(
++                    start = 20.dp,
++                    end = 20.dp,
++                    bottom = 32.dp,
++                ),
++                verticalArrangement = Arrangement.spacedBy(4.dp),
++            ) {
++                item {
++                    Column(
++                        modifier = Modifier.padding(bottom = 8.dp),
++                        verticalArrangement = Arrangement.spacedBy(4.dp),
++                    ) {
++                        Text(
++                            group.title,
++                            style = MaterialTheme.typography.headlineSmall,
++                            fontWeight = FontWeight.ExtraBold,
++                        )
++                        Text(
++                            controlGroupCountLabel(group),
++                            style = MaterialTheme.typography.titleMedium,
++                            color = controlFindingTint(group.severity),
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                        Text(
++                            controlGroupDescription(group.title),
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++
++                itemsIndexed(
++                    group.findings,
++                    key = { index, finding ->
++                        "control-${group.title}-$index-${finding.detail.hashCode()}"
++                    },
++                ) { index, finding ->
++                    ControlFindingCompactRow(
++                        finding = finding,
++                        onClick = { onSelectFinding(index) },
++                    )
++                    if (index != group.findings.lastIndex) {
++                        HorizontalDivider(modifier = Modifier.padding(start = 44.dp))
++                    }
++                }
++            }
++        } else {
++            val compact = compactControlFinding(selectedFinding)
++            var showOriginal by remember(selectedFinding.detail) {
++                mutableStateOf(false)
++            }
++
++            Column(
++                modifier = Modifier
++                    .fillMaxWidth()
++                    .verticalScroll(rememberScrollState())
++                    .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
++                verticalArrangement = Arrangement.spacedBy(16.dp),
++            ) {
++                if (group.findings.size > 1) {
++                    IconButton(onClick = onBackToGroup) {
++                        Icon(
++                            Icons.AutoMirrored.Rounded.ArrowBack,
++                            contentDescription = "Tilbake til ${group.title}",
++                        )
++                    }
++                }
++
++                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
++                    Text(
++                        compact.primary,
++                        style = MaterialTheme.typography.headlineSmall,
++                        fontWeight = FontWeight.ExtraBold,
++                    )
++                    compact.secondary?.let {
++                        Text(
++                            it,
++                            style = MaterialTheme.typography.titleMedium,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++
++                Surface(
++                    modifier = Modifier.fillMaxWidth(),
++                    shape = MaterialTheme.shapes.large,
++                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                 ) {
+-                    Checkbox(checked = rosterGapConfirmed, onCheckedChange = onRosterGapConfirmed)
+-                    Text("Jeg har kontrollert at denne turnustiden er riktig registrert", modifier = Modifier.weight(1f))
+-                }
+-            }
+-            item { HorizontalDivider() }
+-        }
+-        item {
+-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+-                Text(if (reviewCount == 0) "Ingen åpenbare arbeidstidsvarsler" else "$reviewCount forhold bør vurderes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+-                Text("Kontrollen viser hva planen inneholder. Åpne en kategori for å se de konkrete periodene. Den avgjør ikke om en arbeidstidsordning er juridisk godkjent.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+-            }
+-        }
+-        items(groupedFindings, key = { it.title }) { group ->
+-            ControlFindingGroupRow(
+-                title = group.title,
+-                findings = group.findings,
+-                severity = group.severity,
+-                expanded = group.title in expandedGroups,
+-                onToggle = { expandedGroups = toggle(expandedGroups, group.title) },
++                    Column(
++                        modifier = Modifier.padding(16.dp),
++                        verticalArrangement = Arrangement.spacedBy(6.dp),
++                    ) {
++                        Text(
++                            "Hva bør kontrolleres?",
++                            fontWeight = FontWeight.SemiBold,
++                        )
++                        Text(
++                            compact.checkText,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++
++                TextButton(
++                    onClick = { showOriginal = !showOriginal },
++                    modifier = Modifier.fillMaxWidth(),
++                ) {
++                    Icon(
++                        if (showOriginal) {
++                            Icons.Rounded.ExpandLess
++                        } else {
++                            Icons.Rounded.ExpandMore
++                        },
++                        contentDescription = null,
++                    )
++                    Spacer(Modifier.width(6.dp))
++                    Text(
++                        if (showOriginal) {
++                            "Skjul original kontrolltekst"
++                        } else {
++                            "Vis original kontrolltekst"
++                        },
++                    )
++                }
++
++                if (showOriginal) {
++                    Text(
++                        selectedFinding.detail,
++                        style = MaterialTheme.typography.bodyMedium,
++                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun ControlFindingCompactRow(
++    finding: ControlFinding,
++    onClick: () -> Unit,
++) {
++    val compact = compactControlFinding(finding)
++    ListItem(
++        modifier = Modifier
++            .fillMaxWidth()
++            .clickable(onClick = onClick),
++        leadingContent = {
++            Icon(
++                controlFindingIcon(finding.severity),
++                contentDescription = null,
++                tint = controlFindingTint(finding.severity),
++                modifier = Modifier.size(20.dp),
+             )
+-        }
+-        if (settlementSummary.unresolvedRules.isNotEmpty()) {
+-            item { SectionTitle("Regler som faktisk berører denne turen") }
+-            items(settlementSummary.unresolvedRules, key = { it.id }) { rule -> RuleCompactCard(rule.title, rule.source) }
+-        }
+-    }
++        },
++        supportingContent = compact.secondary?.let { secondary ->
++            {
++                Text(
++                    secondary,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                )
++            }
++        },
++        trailingContent = {
++            Icon(
++                Icons.Rounded.ChevronRight,
++                contentDescription = "Vis kontrollpunkt",
++            )
++        },
++        content = {
++            Text(
++                compact.primary,
++                fontWeight = FontWeight.SemiBold,
++            )
++        },
++    )
++}
++
++private data class CompactControlFinding(
++    val primary: String,
++    val secondary: String?,
++    val checkText: String,
++)
++
++private fun compactControlFinding(
++    finding: ControlFinding,
++): CompactControlFinding = when (finding.title) {
++    "Kort hvile mellom arbeidsperioder" -> {
++        val detail = finding.detail
++        if (
++            detail.startsWith("Du har bare ") &&
++            " sammenhengende fri." in detail &&
++            "Den første arbeidsperioden slutter " in detail &&
++            ", og den neste begynner " in detail
++        ) {
++            val duration = detail
++                .substringAfter("Du har bare ")
++                .substringBefore(" sammenhengende fri.")
++            val firstEnd = detail
++                .substringAfter("Den første arbeidsperioden slutter ")
++                .substringBefore(", og den neste begynner ")
++            val nextStart = detail
++                .substringAfter(", og den neste begynner ")
++                .substringBefore(". Kontroller")
++
++            CompactControlFinding(
++                primary = "$duration hvile",
++                secondary = "${compactControlDateTime(firstEnd)} → ${compactControlDateTime(nextStart)}",
++                checkText = "Kontroller hvilken arbeidstidsordning som gjelder, og om det kreves kompenserende hvile.",
++            )
++        } else {
++            genericCompactControlFinding(finding)
++        }
++    }
++
++    "Lang sammenhengende arbeidsperiode" -> {
++        val detail = finding.detail
++        if (
++            detail.startsWith("Arbeidsperioden varer ") &&
++            ", fra " in detail &&
++            " til " in detail
++        ) {
++            val duration = detail
++                .substringAfter("Arbeidsperioden varer ")
++                .substringBefore(", fra ")
++            val start = detail
++                .substringAfter(", fra ")
++                .substringBefore(" til ")
++            val end = detail
++                .substringAfter(" til ")
++                .substringBefore(". Kontroller")
++
++            CompactControlFinding(
++                primary = "$duration arbeid",
++                secondary = "${compactControlDateTime(start)} → ${compactControlDateTime(end)}",
++                checkText = "Kontroller at arbeidsperiodens lengde er tillatt etter arbeidstidsordningen som gjelder for turen.",
++            )
++        } else {
++            genericCompactControlFinding(finding)
++        }
++    }
++
++    "Mer enn 48 timer i den viste perioden" -> {
++        val registered = finding.detail
++            .substringAfter("Du har registrert ")
++            .substringBefore(" som arbeid i perioden.")
++            .takeIf { it != finding.detail }
++
++        CompactControlFinding(
++            primary = registered?.let { "$it registrert" } ?: finding.title,
++            secondary = "Samlet arbeidstid i den viste perioden",
++            checkText = "Kontroller hvilken arbeidstidsordning som gjelder for turen.",
++        )
++    }
++
++    else -> genericCompactControlFinding(finding)
++}
++
++private fun genericCompactControlFinding(
++    finding: ControlFinding,
++): CompactControlFinding {
++    val firstSentence = finding.detail
++        .substringBefore(". ")
++        .trim()
++        .let { if (it.endsWith(".")) it else "$it." }
++    val remainder = finding.detail
++        .removePrefix(firstSentence)
++        .trim()
++
++    return CompactControlFinding(
++        primary = finding.title,
++        secondary = firstSentence,
++        checkText = remainder.ifBlank {
++            "Kontroller dette punktet mot arbeidstidsordningen og regelgrunnlaget som gjelder for turen."
++        },
++    )
++}
++
++private fun controlGroupSupportingText(
++    group: ControlFindingGroup,
++): String = when {
++    group.findings.size == 1 ->
++        compactControlFinding(group.findings.first()).primary
++    group.title == "Kort hvile mellom arbeidsperioder" ->
++        "${group.findings.size} perioder"
++    group.title == "Lang sammenhengende arbeidsperiode" ->
++        "${group.findings.size} perioder"
++    else ->
++        "${group.findings.size} forhold"
++}
++
++private fun controlGroupCountLabel(
++    group: ControlFindingGroup,
++): String = when {
++    group.findings.size == 1 -> "1 forhold"
++    group.title == "Kort hvile mellom arbeidsperioder" ->
++        "${group.findings.size} perioder"
++    group.title == "Lang sammenhengende arbeidsperiode" ->
++        "${group.findings.size} perioder"
++    else ->
++        "${group.findings.size} forhold"
++}
++
++private fun controlGroupDescription(
++    title: String,
++): String = when (title) {
++    "Kort hvile mellom arbeidsperioder" ->
++        "Perioder med mindre enn 11 timer sammenhengende fri."
++    "Lang sammenhengende arbeidsperiode" ->
++        "Sammenhengende arbeidsperioder over 13 timer."
++    "Mer enn 48 timer i den viste perioden" ->
++        "Samlet registrert arbeidstid i perioden."
++    else ->
++        "Konkrete kontrollpunkter fra den registrerte arbeidsplanen."
++}
++
++private fun compactControlDateTime(
++    value: String,
++): String {
++    val replacements = listOf(
++        "mandag" to "man.",
++        "tirsdag" to "tir.",
++        "onsdag" to "ons.",
++        "torsdag" to "tor.",
++        "fredag" to "fre.",
++        "lørdag" to "lør.",
++        "søndag" to "søn.",
++        "januar" to "jan.",
++        "februar" to "feb.",
++        "mars" to "mar.",
++        "april" to "apr.",
++        "mai" to "mai",
++        "juni" to "jun.",
++        "juli" to "jul.",
++        "august" to "aug.",
++        "september" to "sep.",
++        "oktober" to "okt.",
++        "november" to "nov.",
++        "desember" to "des.",
++        " kl. " to " ",
++    )
++    return replacements.fold(value) { current, (from, to) ->
++        current.replace(from, to)
++    }
++}
++
++@Composable
++private fun controlFindingTint(
++    severity: FindingSeverity,
++): Color = when (severity) {
++    FindingSeverity.OK -> MaterialTheme.colorScheme.primary
++    FindingSeverity.CRITICAL -> MaterialTheme.colorScheme.error
++    FindingSeverity.REVIEW -> MaterialTheme.colorScheme.secondary
++    FindingSeverity.OPEN -> MaterialTheme.colorScheme.tertiary
++}
++
++private fun controlFindingIcon(
++    severity: FindingSeverity,
++): ImageVector = when (severity) {
++    FindingSeverity.OK -> Icons.Rounded.CheckCircle
++    FindingSeverity.REVIEW, FindingSeverity.CRITICAL -> Icons.Rounded.Warning
++    FindingSeverity.OPEN -> Icons.AutoMirrored.Rounded.HelpOutline
+ }
+ 
+ @Composable
+@@ -4436,55 +5041,6 @@
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+             )
+         }
+-    }
+-}
+-
+-@Composable
+-private fun ControlFindingGroupRow(
+-    title: String,
+-    findings: List<ControlFinding>,
+-    severity: FindingSeverity,
+-    expanded: Boolean,
+-    onToggle: () -> Unit,
+-) {
+-    val icon = when (severity) {
+-        FindingSeverity.OK -> Icons.Rounded.CheckCircle
+-        FindingSeverity.REVIEW, FindingSeverity.CRITICAL -> Icons.Rounded.Warning
+-        FindingSeverity.OPEN -> Icons.AutoMirrored.Rounded.HelpOutline
+-    }
+-    val tint = when (severity) {
+-        FindingSeverity.OK -> MaterialTheme.colorScheme.primary
+-        FindingSeverity.CRITICAL -> MaterialTheme.colorScheme.error
+-        FindingSeverity.REVIEW -> MaterialTheme.colorScheme.secondary
+-        FindingSeverity.OPEN -> MaterialTheme.colorScheme.tertiary
+-    }
+-    Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle)) {
+-        Row(
+-            modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
+-            verticalAlignment = Alignment.Top,
+-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+-        ) {
+-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+-                Text(title, fontWeight = FontWeight.SemiBold)
+-                Text(
+-                    if (findings.size == 1) findings.first().detail else "${findings.size} forhold · trykk for detaljer",
+-                    style = MaterialTheme.typography.bodySmall,
+-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+-                    maxLines = if (expanded || findings.size == 1) Int.MAX_VALUE else 2,
+-                )
+-            }
+-            if (findings.size > 1) Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null)
+-        }
+-        if (expanded && findings.size > 1) {
+-            Column(modifier = Modifier.padding(start = 30.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+-                findings.forEachIndexed { index, finding ->
+-                    Text(finding.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+-                    if (index != findings.lastIndex) HorizontalDivider()
+-                }
+-            }
+-        }
+-        HorizontalDivider()
+     }
+ }
+ 

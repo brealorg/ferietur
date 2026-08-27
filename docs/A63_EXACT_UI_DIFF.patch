@@ -1,0 +1,345 @@
+--- A62/FerieturApp.kt
++++ A63/FerieturApp.kt
+@@ -6,6 +6,9 @@
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.clickable
++import androidx.compose.foundation.selection.selectable
++import androidx.compose.foundation.selection.selectableGroup
++import androidx.compose.foundation.selection.toggleable
+ import androidx.compose.foundation.gestures.detectTapGestures
+ import androidx.compose.foundation.horizontalScroll
+ import androidx.compose.foundation.text.KeyboardOptions
+@@ -80,6 +83,7 @@
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.IconButton
+ import androidx.compose.material3.ListItem
++import androidx.compose.material3.LinearProgressIndicator
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.ModalBottomSheet
+ import androidx.compose.material3.SheetValue
+@@ -116,9 +120,13 @@
+ import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.StrokeCap
+ import androidx.compose.ui.graphics.vector.ImageVector
+ import androidx.compose.ui.platform.LocalConfiguration
+ import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.semantics.heading
++import androidx.compose.ui.semantics.semantics
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.input.KeyboardType
+ import androidx.compose.ui.text.style.TextOverflow
+@@ -1674,13 +1682,10 @@
+         item {
+             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                 Text("Navn på turen", style = MaterialTheme.typography.labelLarge)
+-                OutlinedTextField(
++                TripTitleTextField(
+                     value = tripTitle,
+                     onValueChange = onTripTitle,
+-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+-                    placeholder = { Text("For eksempel Solgården") },
+-                    singleLine = true,
+-                    shape = MaterialTheme.shapes.medium,
++                    modifier = Modifier.fillMaxWidth(),
+                 )
+             }
+         }
+@@ -1724,6 +1729,36 @@
+             }
+         }
+     }
++}
++
++
++@Composable
++private fun TripTitleTextField(
++    value: String,
++    onValueChange: (String) -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    val state = rememberTextFieldState(initialText = value)
++
++    LaunchedEffect(state) {
++        snapshotFlow { state.text.toString() }
++            .collectLatest { current ->
++                onValueChange(current)
++            }
++    }
++    LaunchedEffect(value) {
++        if (state.text.toString() != value) {
++            state.setTextAndPlaceCursorAtEnd(value)
++        }
++    }
++
++    OutlinedTextField(
++        state = state,
++        modifier = modifier.heightIn(min = 56.dp),
++        placeholder = { Text("For eksempel Solgården") },
++        lineLimits = TextFieldLineLimits.SingleLine,
++        shape = MaterialTheme.shapes.medium,
++    )
+ }
+ 
+ @Composable
+@@ -1949,7 +1984,11 @@
+                 MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f),
+             ),
+         ) {
+-            Column { content() }
++            Column(
++                modifier = Modifier.selectableGroup(),
++            ) {
++                content()
++            }
+         }
+     }
+ }
+@@ -1958,6 +1997,7 @@
+ private fun MethodSectionHeading(text: String) {
+     Text(
+         text,
++        modifier = Modifier.semantics { heading() },
+         style = MaterialTheme.typography.titleSmall,
+         fontWeight = FontWeight.Bold,
+         color = MaterialTheme.colorScheme.onSurface,
+@@ -1981,14 +2021,18 @@
+         Row(
+             modifier = Modifier
+                 .fillMaxWidth()
+-                .clickable(onClick = onClick)
++                .selectable(
++                    selected = selected,
++                    onClick = onClick,
++                    role = Role.RadioButton,
++                )
+                 .padding(horizontal = 10.dp, vertical = 7.dp),
+             verticalAlignment = Alignment.CenterVertically,
+             horizontalArrangement = Arrangement.spacedBy(7.dp),
+         ) {
+             RadioButton(
+                 selected = selected,
+-                onClick = onClick,
++                onClick = null,
+                 colors = RadioButtonDefaults.colors(
+                     selectedColor = MaterialTheme.colorScheme.secondary,
+                     unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant,
+@@ -2389,14 +2433,18 @@
+             Row(
+                 modifier = Modifier
+                     .fillMaxWidth()
+-                    .clickable { onPayslipChecked(!payslipChecked) }
++                    .toggleable(
++                        value = payslipChecked,
++                        role = Role.Checkbox,
++                        onValueChange = onPayslipChecked,
++                    )
+                     .padding(vertical = 2.dp),
+                 verticalAlignment = Alignment.Top,
+                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+             ) {
+                 Checkbox(
+                     checked = payslipChecked,
+-                    onCheckedChange = onPayslipChecked,
++                    onCheckedChange = null,
+                     colors = CheckboxDefaults.colors(
+                         checkedColor = MaterialTheme.colorScheme.secondary,
+                         checkmarkColor = MaterialTheme.colorScheme.onSecondary,
+@@ -4333,15 +4381,17 @@
+                         Row(
+                             modifier = Modifier
+                                 .fillMaxWidth()
+-                                .clickable {
+-                                    onRosterGapConfirmed(!rosterGapConfirmed)
+-                                },
++                                .toggleable(
++                                    value = rosterGapConfirmed,
++                                    role = Role.Checkbox,
++                                    onValueChange = onRosterGapConfirmed,
++                                ),
+                             horizontalArrangement = Arrangement.spacedBy(10.dp),
+                             verticalAlignment = Alignment.CenterVertically,
+                         ) {
+                             Checkbox(
+                                 checked = rosterGapConfirmed,
+-                                onCheckedChange = onRosterGapConfirmed,
++                                onCheckedChange = null,
+                             )
+                             Text(
+                                 "Jeg har kontrollert at dette er riktig registrert",
+@@ -4361,6 +4411,7 @@
+                 } else {
+                     "$reviewCount forhold bør vurderes"
+                 },
++                modifier = Modifier.semantics { heading() },
+                 style = MaterialTheme.typography.headlineSmall,
+                 fontWeight = FontWeight.ExtraBold,
+             )
+@@ -5695,6 +5746,42 @@
+     }
+ }
+ 
++
++@Composable
++private fun RosterCodeTextField(
++    value: String,
++    onValueChange: (String) -> Unit,
++    modifier: Modifier = Modifier,
++) {
++    val state = rememberTextFieldState(initialText = value)
++    val codeInputTransformation = remember {
++        InputTransformation.maxLength(RosterEntryCodec.MAX_CODE_LENGTH)
++    }
++
++    LaunchedEffect(state) {
++        snapshotFlow { state.text.toString() }
++            .collectLatest { current ->
++                onValueChange(current)
++            }
++    }
++    LaunchedEffect(value) {
++        if (state.text.toString() != value) {
++            state.setTextAndPlaceCursorAtEnd(value)
++        }
++    }
++
++    OutlinedTextField(
++        state = state,
++        label = { Text("Vaktkode") },
++        supportingText = {
++            Text("Obligatorisk · maks ${RosterEntryCodec.MAX_CODE_LENGTH} tegn")
++        },
++        inputTransformation = codeInputTransformation,
++        lineLimits = TextFieldLineLimits.SingleLine,
++        modifier = modifier,
++    )
++}
++
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ private fun RosterDayEditorSheet(
+@@ -5764,7 +5851,9 @@
+                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f),
+                     ),
+                 ) {
+-                    Column {
++                    Column(
++                        modifier = Modifier.selectableGroup(),
++                    ) {
+                         MethodRadioRow(
+                             selected = !freeSelected,
+                             title = "Arbeidsvakt",
+@@ -5847,19 +5936,14 @@
+                                     }
+                                 }
+                             }
+-                            OutlinedTextField(
++                            RosterCodeTextField(
+                                 value = draft.code,
+                                 onValueChange = { value ->
+                                     workDrafts = workDrafts.updated(
+                                         index,
+-                                        draft.copy(code = value.take(RosterEntryCodec.MAX_CODE_LENGTH)),
++                                        draft.copy(code = value),
+                                     )
+                                 },
+-                                label = { Text("Vaktkode") },
+-                                supportingText = {
+-                                    Text("Obligatorisk · maks ${RosterEntryCodec.MAX_CODE_LENGTH} tegn")
+-                                },
+-                                singleLine = true,
+                                 modifier = Modifier.fillMaxWidth(),
+                             )
+                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+@@ -5915,16 +5999,9 @@
+                             modifier = Modifier.padding(14.dp),
+                             verticalArrangement = Arrangement.spacedBy(8.dp),
+                         ) {
+-                            OutlinedTextField(
++                            RosterCodeTextField(
+                                 value = freeCode,
+-                                onValueChange = {
+-                                    freeCode = it.take(RosterEntryCodec.MAX_CODE_LENGTH)
+-                                },
+-                                label = { Text("Vaktkode") },
+-                                supportingText = {
+-                                    Text("Obligatorisk · maks ${RosterEntryCodec.MAX_CODE_LENGTH} tegn")
+-                                },
+-                                singleLine = true,
++                                onValueChange = { freeCode = it },
+                                 modifier = Modifier.fillMaxWidth(),
+                             )
+                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+@@ -5946,7 +6023,9 @@
+                                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f),
+                                     ),
+                                 ) {
+-                                    Column {
++                                    Column(
++                                        modifier = Modifier.selectableGroup(),
++                                    ) {
+                                         MethodRadioRow(
+                                             selected = weeklyOff == true,
+                                             title = "Ukentlig fridag",
+@@ -7036,7 +7115,12 @@
+ 
+ @Composable
+ private fun SectionTitle(text: String) {
+-    Text(text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
++    Text(
++        text,
++        modifier = Modifier.semantics { heading() },
++        style = MaterialTheme.typography.titleLarge,
++        fontWeight = FontWeight.ExtraBold,
++    )
+ }
+ 
+ @Composable
+@@ -7116,30 +7200,28 @@
+                         fontWeight = FontWeight.SemiBold,
+                     )
+                 }
+-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
++                Text(
++                    title,
++                    modifier = Modifier.semantics { heading() },
++                    style = MaterialTheme.typography.headlineSmall,
++                    fontWeight = FontWeight.Bold,
++                )
+             }
+             saveUi?.let { SaveStatusAction(it) }
+         }
+         progress?.let {
+-            Box(
++            LinearProgressIndicator(
++                progress = { it.fraction },
+                 modifier = Modifier
+                     .fillMaxWidth()
+                     .padding(horizontal = 8.dp)
+                     .height(4.dp),
+-            ) {
+-                Surface(
+-                    modifier = Modifier.fillMaxSize(),
+-                    shape = CircleShape,
+-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+-                    content = {},
+-                )
+-                Surface(
+-                    modifier = Modifier.fillMaxWidth(it.fraction).height(4.dp),
+-                    shape = CircleShape,
+-                    color = MaterialTheme.colorScheme.secondary,
+-                    content = {},
+-                )
+-            }
++                color = MaterialTheme.colorScheme.secondary,
++                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
++                strokeCap = StrokeCap.Round,
++                gapSize = 0.dp,
++                drawStopIndicator = {},
++            )
+         }
+     }
+ }

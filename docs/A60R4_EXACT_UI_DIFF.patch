@@ -1,0 +1,146 @@
+--- A60R3R1/FerieturApp.kt
++++ A60R4/FerieturApp.kt
+@@ -9,6 +9,10 @@
+ import androidx.compose.foundation.gestures.detectTapGestures
+ import androidx.compose.foundation.horizontalScroll
+ import androidx.compose.foundation.text.KeyboardOptions
++import androidx.compose.foundation.text.input.InputTransformation
++import androidx.compose.foundation.text.input.TextFieldLineLimits
++import androidx.compose.foundation.text.input.byValue
++import androidx.compose.foundation.text.input.rememberTextFieldState
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
+@@ -100,6 +104,7 @@
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.snapshotFlow
+ import androidx.compose.runtime.staticCompositionLocalOf
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+@@ -168,6 +173,7 @@
+ import java.util.Locale
+ import java.util.UUID
+ import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.collectLatest
+ 
+ private enum class FlowScreen(val title: String) {
+     HOME("Ferietur"),
+@@ -3960,7 +3966,35 @@
+         tripStart = tripStart,
+         tripEnd = tripEnd,
+     )
+-    val customAmount = customAmountText.toNorwegianMoneyOrNull()
++    // State-based TextFields own text, cursor, selection and IME composition.
++    // The outer draft state is mirrored from snapshotFlow and no longer drives
++    // the live editor on every keystroke.
++    val amountFieldState = rememberTextFieldState(initialText = customAmountText)
++    val reasonFieldState = rememberTextFieldState(initialText = reason)
++    val amountInputTransformation = remember {
++        InputTransformation.byValue { _, proposed ->
++            proposed.filter {
++                it.isDigit() || it == ',' || it == '.' || it == ' '
++            }
++        }
++    }
++
++    LaunchedEffect(amountFieldState) {
++        snapshotFlow { amountFieldState.text.toString() }
++            .collectLatest { current ->
++                onCustomAmountText(current)
++            }
++    }
++    LaunchedEffect(reasonFieldState) {
++        snapshotFlow { reasonFieldState.text.toString() }
++            .collectLatest { current ->
++                onReason(current)
++            }
++    }
++
++    val currentAmountText = amountFieldState.text.toString()
++    val currentReason = reasonFieldState.text.toString()
++    val customAmount = currentAmountText.toNorwegianMoneyOrNull()
+ 
+     var amountFocusedOnce by remember(settlementMode) { mutableStateOf(false) }
+     var amountTouched by remember(settlementMode) { mutableStateOf(false) }
+@@ -3970,14 +4004,14 @@
+     val amountError = when {
+         settlementMode != SettlementMode.CUSTOM_AGREEMENT -> null
+         !amountTouched -> null
+-        customAmountText.isBlank() -> "Beløp må fylles ut"
++        currentAmountText.isBlank() -> "Beløp må fylles ut"
+         customAmount == null -> "Skriv inn et gyldig beløp"
+         else -> null
+     }
+     val reasonError = when {
+         settlementMode != SettlementMode.CUSTOM_AGREEMENT -> null
+         !reasonTouched -> null
+-        reason.isBlank() -> "Forklar hvorfor beløpet avviker"
++        currentReason.isBlank() -> "Forklar hvorfor beløpet avviker"
+         else -> null
+     }
+ 
+@@ -4063,14 +4097,7 @@
+         if (settlementMode == SettlementMode.CUSTOM_AGREEMENT) {
+             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                 OutlinedTextField(
+-                    value = customAmountText,
+-                    onValueChange = { value ->
+-                        onCustomAmountText(
+-                            value.filter {
+-                                it.isDigit() || it == ',' || it == '.' || it == ' '
+-                            },
+-                        )
+-                    },
++                    state = amountFieldState,
+                     modifier = Modifier
+                         .fillMaxWidth()
+                         .onFocusChanged { focusState ->
+@@ -4082,14 +4109,15 @@
+                         },
+                     label = { Text("Avtalt beløp") },
+                     isError = amountError != null,
++                    inputTransformation = amountInputTransformation,
+                     keyboardOptions = KeyboardOptions(
+                         keyboardType = KeyboardType.Decimal,
+                     ),
+-                    singleLine = true,
++                    lineLimits = TextFieldLineLimits.SingleLine,
+                 )
+                 Text(
+                     amountError
+-                        ?: if (customAmountText.isBlank()) {
++                        ?: if (currentAmountText.isBlank()) {
+                             "Obligatorisk · eksempel: 27 500,00 kr"
+                         } else {
+                             "Eksempel: 27 500,00 kr"
+@@ -4106,11 +4134,9 @@
+ 
+             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                 OutlinedTextField(
+-                    value = reason,
+-                    onValueChange = onReason,
++                    state = reasonFieldState,
+                     modifier = Modifier
+                         .fillMaxWidth()
+-                        .height(176.dp)
+                         .onFocusChanged { focusState ->
+                             if (focusState.isFocused) {
+                                 reasonFocusedOnce = true
+@@ -4123,10 +4149,14 @@
+                         Text("Hvorfor avviker beløpet fra beregningen?")
+                     },
+                     isError = reasonError != null,
++                    lineLimits = TextFieldLineLimits.MultiLine(
++                        minHeightInLines = 5,
++                        maxHeightInLines = 5,
++                    ),
+                 )
+                 Text(
+                     reasonError
+-                        ?: if (reason.isBlank()) {
++                        ?: if (currentReason.isBlank()) {
+                             "Obligatorisk"
+                         } else {
+                             "Kort begrunnelse for avviket"
