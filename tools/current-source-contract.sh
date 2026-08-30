@@ -23,6 +23,7 @@ for f in \
     app/src/main/java/app/ferietur/domain/TariffSegmentation.kt \
     app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt \
     app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt \
+    app/src/main/java/app/ferietur/domain/TariffSegmentedMonetaryCalculation.kt \
     app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
     app/src/main/java/app/ferietur/domain/SavedTripDraft.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt \
@@ -53,6 +54,7 @@ tariff_resolution = (root/'app/src/main/java/app/ferietur/domain/TariffResolutio
 tariff_segmentation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentation.kt').read_text(encoding='utf-8')
 tariff_segment_calculation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt').read_text(encoding='utf-8')
 tariff_whole_trip_scope = (root/'app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt').read_text(encoding='utf-8')
+tariff_segmented_monetary = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentedMonetaryCalculation.kt').read_text(encoding='utf-8')
 salary_tables = (root/'app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt').read_text(encoding='utf-8')
 draft = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraft.kt').read_text(encoding='utf-8')
 finalized = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt').read_text(encoding='utf-8')
@@ -217,6 +219,18 @@ engine_line_ids = set(re.findall(r'id\s*=\s*"([^"]+)"', projected_core))
 scope_line_ids = set(re.findall(r'"([^"]+)"\s+to\s+TariffCalculationLineScope\.', tariff_whole_trip_scope))
 req(engine_line_ids == scope_line_ids, 'calculation_line_scope_catalog_not_exhaustive')
 print('CURRENT_TARIFF_WHOLE_TRIP_SCOPE_CONTRACT=PASS')
+# A4A5 segmented monetary coordination contract.
+req('object TariffSourceBlockReconstructor' in tariff_whole_trip_scope, 'source_block_reconstructor_not_shared')
+req('object TariffSegmentedMonetaryCoordinator' in tariff_segmented_monetary, 'segmented_monetary_coordinator_missing')
+req('TariffWholeTripScopeCoordinator.coordinate(plan)' in tariff_segmented_monetary, 'whole_trip_scope_gate_not_used_by_monetary_coordinator')
+req('TariffCalculationLineScope.SEGMENT_LOCAL' in tariff_segmented_monetary, 'segment_local_line_filter_missing')
+req('wholeTripStayLines(plan)' in tariff_segmented_monetary, 'whole_trip_stay_coordination_missing')
+req('watchSourceIndex = watchScope.watchSourceIndex' in tariff_segmented_monetary, 'per_watch_line_provenance_missing')
+req('SPLIT_TRAVEL_NOTICE_COORDINATION_REQUIRED' in tariff_segmented_monetary, 'split_short_notice_fail_closed_gate_missing')
+req('TravelNoticeStatus.KNOWN_BY_PREVIOUS_DAY' in tariff_segmented_monetary, 'known_travel_split_gate_missing')
+req('calculatePreliminaryFromProjectedBlocks(' in tariff_segmented_monetary, 'projected_core_not_reused_by_segmented_monetary')
+req('app/src/main/java/app/ferietur/ui/FerieturApp.kt' not in tariff_segmented_monetary, 'ui_dependency_leaked_into_segmented_monetary_domain')
+print('CURRENT_TARIFF_SEGMENTED_MONETARY_CONTRACT=PASS')
 
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')

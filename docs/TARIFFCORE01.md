@@ -395,3 +395,60 @@ A4A4 beregner ingen nye beløp, endrer ingen snapshot og brukes ikke av UI/PDF.
 Neste slice kan bruke scope-planen til å koordinere hel-tur-reglene og deretter
 slå sammen segmentlokale beløp uten dobbel døgngodtgjøring, dobbel
 kortvarselsgrense eller dobbel avrunding per hvilende vakt.
+
+## A4A5: første segmenterte monetære koordinator
+
+A4A5 er første slice som faktisk kan beregne og summere beløp over en ren
+sats-/lønnstabellgrense. Den er fortsatt en domenemotor og er ikke koblet til
+UI, snapshot eller PDF ennå.
+
+`TariffSegmentedMonetaryCoordinator` bygger resultatet fra tre disjunkte scope:
+
+- `SEGMENT_LOCAL`: beregnes én gang per A4A2-slice med akkurat slicens
+  lønnstabell, årslønn, timelønn og `TariffRateSet`;
+- `WHOLE_TRIP`: døgngodtgjøring beregnes én gang for hele turen, etter at A4A4
+  har bevist at sats og resttidsgrense er invariant;
+- `PER_RESTING_WATCH`: aktivt arbeid under hvilende natt rekonstrueres fra
+  original `sourceIndex` og avrundes én gang per opprinnelig vakt. A4A4 må på
+  forhånd ha bevist at alle aktive hendelser på vakten har én entydig
+  pris-/avrundingskontekst.
+
+### Enkelt-slice-paritet
+
+For en tur med bare én tariffkontekst delegerer koordinatoren direkte til den
+etablerte projiserte beregningskjernen. Linjer, kjent beløp, betalingsgrunnlag,
+åpne beløp og uavklarte regel-ID-er skal derfor være identiske med dagens
+`PreliminaryCalculation`.
+
+### Faktisk split-prising
+
+Ved flere slicer kjøres bare `SEGMENT_LOCAL`-linjene per slice. Dermed kan for
+eksempel én time aktivt arbeid før en virkningsdato prises med gammel timelønn
+og én time etter datoen med ny timelønn, uten at døgngodtgjøring eller
+nattavrunding dobles.
+
+Linjer beholdes foreløpig separat per tariffkontekst i
+`TariffScopedCalculationLine`, med `sliceIndex` eller `watchSourceIndex` som
+proveniens. A4A5 forsøker ikke å slå to forskjellige satser sammen til én
+presentasjonslinje.
+
+### Kort/uavklart reisevarsel er fortsatt fail-closed ved split
+
+Punkt 18.4 bruker en felles grense for turen, mens punkt 13.3 avrunder
+overtidsgrunnlaget. Dersom en split-tur inneholder reise uten tilsynsansvar med
+`NOT_KNOWN_BY_PREVIOUS_DAY` eller `NOT_CLARIFIED`, returnerer A4A5 derfor
+`SPLIT_TRAVEL_NOTICE_COORDINATION_REQUIRED`.
+
+Dette er bevisst konservativt. Ordinær reise som var kjent senest dagen i
+forveien kan allerede prises segmentlokalt med forskjellige timelønner. En egen
+senere slice må definere hvordan den felles kortvarselsmengden og avrundede
+overtidsbånd fordeles når de faktisk berører flere priskontekster.
+
+### Ikke runtime-aktivert ennå
+
+A4A5 introduserer en reell segmentert monetær domeneberegning, men
+`FerieturApp` bruker fortsatt dagens single-context runtime-path. Snapshot v2,
+PDF og UI endres ikke i denne slicen. Neste steg kan først kvalifisere A4A5 og
+deretter koble resolver → slice builder → monetær koordinator inn i en eksplisitt
+runtime-orchestrator med bakoverkompatibel snapshot-proveniens for flere
+kontekster.

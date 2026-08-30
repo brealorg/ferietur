@@ -102,6 +102,79 @@ sealed interface TariffWholeTripScopeResult {
     ) : TariffWholeTripScopeResult
 }
 
+
+data class ReconstructedTariffSourceBlock(
+    val sourceIndex: Int,
+    val block: WorkBlock,
+    val sliceIndexes: Set<Int>,
+) {
+    init {
+        require(sourceIndex >= 0)
+        require(sliceIndexes.isNotEmpty())
+        require(block.end.isAfter(block.start))
+    }
+}
+
+sealed interface TariffSourceBlockReconstructionResult {
+    data class Success(val blocks: List<ReconstructedTariffSourceBlock>) : TariffSourceBlockReconstructionResult
+
+    data class Failure(
+        val sourceIndex: Int,
+        val detail: String,
+    ) : TariffSourceBlockReconstructionResult
+}
+
+/**
+ * Reassembles the original projected [WorkBlock]s from A4A2 tariff-slice
+ * fragments. The reconstruction is provenance-only: it never invents time,
+ * kind, or travel-notice state.
+ */
+object TariffSourceBlockReconstructor {
+    fun reconstruct(plan: SegmentedTariffCalculationPlan): TariffSourceBlockReconstructionResult {
+        val fragments = plan.slices.flatMapIndexed { sliceIndex, slice ->
+            slice.workBlocks.map { entry -> Fragment(sliceIndex, entry.sourceIndex, entry.block) }
+        }.groupBy { it.sourceIndex }
+
+        val reconstructed = mutableListOf<ReconstructedTariffSourceBlock>()
+        fragments.toSortedMap().forEach { (sourceIndex, sourceFragments) ->
+            val ordered = sourceFragments.sortedBy { it.block.start }
+            val first = ordered.first()
+            if (ordered.any { it.block.kind != first.block.kind || it.block.travelNoticeStatus != first.block.travelNoticeStatus }) {
+                return TariffSourceBlockReconstructionResult.Failure(
+                    sourceIndex,
+                    "Kildefragmentene for arbeidsintervall #$sourceIndex har ulik tidsart eller reisevarselstatus.",
+                )
+            }
+            ordered.zipWithNext().forEach { (previous, next) ->
+                if (next.block.start.isAfter(previous.block.end)) {
+                    return TariffSourceBlockReconstructionResult.Failure(
+                        sourceIndex,
+                        "Kildefragmentene for arbeidsintervall #$sourceIndex har et hull mellom " +
+                            "${previous.block.end} og ${next.block.start}.",
+                    )
+                }
+            }
+            reconstructed += ReconstructedTariffSourceBlock(
+                sourceIndex = sourceIndex,
+                block = WorkBlock(
+                    start = ordered.minOf { it.block.start },
+                    end = ordered.maxOf { it.block.end },
+                    kind = first.block.kind,
+                    travelNoticeStatus = first.block.travelNoticeStatus,
+                ),
+                sliceIndexes = ordered.map { it.sliceIndex }.toSortedSet(),
+            )
+        }
+        return TariffSourceBlockReconstructionResult.Success(reconstructed)
+    }
+
+    private data class Fragment(
+        val sliceIndex: Int,
+        val sourceIndex: Int,
+        val block: WorkBlock,
+    )
+}
+
 /**
  * Coordinates rules whose scope is wider than one effective-date slice.
  *
@@ -145,15 +218,15 @@ object TariffWholeTripScopeCoordinator {
             )
         }
 
-        val reconstructed = reconstructSourceBlocks(plan)
-        if (reconstructed is ReconstructedSourceBlocks.Failure) {
+        val reconstructed = TariffSourceBlockReconstructor.reconstruct(plan)
+        if (reconstructed is TariffSourceBlockReconstructionResult.Failure) {
             return TariffWholeTripScopeResult.Failure(
                 reason = TariffWholeTripScopeFailureReason.SOURCE_BLOCK_RECONSTRUCTION_FAILED,
                 detail = reconstructed.detail,
                 sourceIndex = reconstructed.sourceIndex,
             )
         }
-        reconstructed as ReconstructedSourceBlocks.Success
+        reconstructed as TariffSourceBlockReconstructionResult.Success
 
         val restingWatches = reconstructed.blocks.filter { it.block.kind == TimeKind.RESTING_NIGHT_WATCH }
         val activeEvents = reconstructed.blocks.filter { it.block.kind == TimeKind.ACTIVE_EVENT_ON_RESTING }
@@ -167,6 +240,7 @@ object TariffWholeTripScopeCoordinator {
             val pricingKeys = eventSliceIndexes.map { sliceIndex ->
                 val slice = plan.slices[sliceIndex]
                 ActiveRestingPricingKey(
+                    tariffPackageId = slice.segment.tariffPackage.id,
                     hourlyRate = slice.hourlyRate.normalizedMoneyKey(),
                     chapter20ActiveMultiplier = slice.segment.rateSet.chapter20ActiveMultiplier.normalizedMoneyKey(),
                     roundingStepMinutes = slice.segment.rateSet.activeNightRoundingStepMinutes,
@@ -201,66 +275,12 @@ object TariffWholeTripScopeCoordinator {
         )
     }
 
-    private sealed interface ReconstructedSourceBlocks {
-        data class Success(val blocks: List<ReconstructedSourceBlock>) : ReconstructedSourceBlocks
-        data class Failure(val sourceIndex: Int, val detail: String) : ReconstructedSourceBlocks
-    }
-
-    private data class ReconstructedSourceBlock(
-        val sourceIndex: Int,
-        val block: WorkBlock,
-        val sliceIndexes: Set<Int>,
-    )
-
     private data class ActiveRestingPricingKey(
+        val tariffPackageId: String,
         val hourlyRate: BigDecimal,
         val chapter20ActiveMultiplier: BigDecimal,
         val roundingStepMinutes: Int,
         val roundUpRemainderAtMinutes: Int,
-    )
-
-    private fun reconstructSourceBlocks(plan: SegmentedTariffCalculationPlan): ReconstructedSourceBlocks {
-        val fragments = plan.slices.flatMapIndexed { sliceIndex, slice ->
-            slice.workBlocks.map { entry -> Fragment(sliceIndex, entry.sourceIndex, entry.block) }
-        }.groupBy { it.sourceIndex }
-
-        val reconstructed = mutableListOf<ReconstructedSourceBlock>()
-        fragments.toSortedMap().forEach { (sourceIndex, sourceFragments) ->
-            val ordered = sourceFragments.sortedBy { it.block.start }
-            val first = ordered.first()
-            if (ordered.any { it.block.kind != first.block.kind || it.block.travelNoticeStatus != first.block.travelNoticeStatus }) {
-                return ReconstructedSourceBlocks.Failure(
-                    sourceIndex,
-                    "Kildefragmentene for arbeidsintervall #$sourceIndex har ulik tidsart eller reisevarselstatus.",
-                )
-            }
-            ordered.zipWithNext().forEach { (previous, next) ->
-                if (next.block.start.isAfter(previous.block.end)) {
-                    return ReconstructedSourceBlocks.Failure(
-                        sourceIndex,
-                        "Kildefragmentene for arbeidsintervall #$sourceIndex har et hull mellom " +
-                            "${previous.block.end} og ${next.block.start}.",
-                    )
-                }
-            }
-            reconstructed += ReconstructedSourceBlock(
-                sourceIndex = sourceIndex,
-                block = WorkBlock(
-                    start = ordered.minOf { it.block.start },
-                    end = ordered.maxOf { it.block.end },
-                    kind = first.block.kind,
-                    travelNoticeStatus = first.block.travelNoticeStatus,
-                ),
-                sliceIndexes = ordered.map { it.sliceIndex }.toSortedSet(),
-            )
-        }
-        return ReconstructedSourceBlocks.Success(reconstructed)
-    }
-
-    private data class Fragment(
-        val sliceIndex: Int,
-        val sourceIndex: Int,
-        val block: WorkBlock,
     )
 
     private fun intersects(first: WorkBlock, second: WorkBlock): Boolean =
