@@ -13,8 +13,11 @@ import app.ferietur.domain.ControlFinding
 import app.ferietur.domain.DomainRule
 import app.ferietur.domain.EmployerKind
 import app.ferietur.domain.FinalizedTripSnapshot
+import app.ferietur.domain.FinalizedCalculationPresentationLine
+import app.ferietur.domain.FinalizedCalculationPresentations
 import app.ferietur.domain.FerieturTariffRates
 import app.ferietur.domain.TariffRateSet
+import app.ferietur.domain.TariffCalculationLineScope
 import app.ferietur.domain.FindingSeverity
 import app.ferietur.domain.PayingParty
 import app.ferietur.domain.PaymentTreatment
@@ -83,6 +86,7 @@ object PdfExporter {
      * Juridisk sporbarhet og kontrollinformasjon kommer etterpå, i kompakt form.
      */
     private fun writeExecutiveSummary(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet, includeFooter: Boolean) {
+        val calculation = s.presentation
         w.documentLabel(if (includeFooter) "KORT OPPSUMMERING" else "FULLT BEREGNINGSGRUNNLAG")
         w.h1(s.title.ifBlank { "Ferietur" })
         w.p("${dateTime(s.tripStart)} - ${dateTime(s.tripEnd)}")
@@ -94,8 +98,8 @@ object PdfExporter {
             s.unresolvedRules.isNotEmpty() -> "Foreløpig beregnet lønn og godtgjøring"
             else -> "Beregnet lønn og godtgjøring"
         }
-        val proposed = if (s.settlement.usesFullCalculation) s.calculation.paymentBasisAmount else s.settlement.proposedAmount
-        val openLines = s.calculation.lines.filter { it.paymentTreatment == PaymentTreatment.OPEN && (it.amount > BigDecimal.ZERO || it.certainty == CalculationCertainty.OPEN) }
+        val proposed = if (s.settlement.usesFullCalculation) calculation.paymentBasisAmount else s.settlement.proposedAmount
+        val openLines = calculation.lines.filter { it.paymentTreatment == PaymentTreatment.OPEN && (it.amount > BigDecimal.ZERO || it.certainty == CalculationCertainty.OPEN) }
         val possibleExtra = openLines.fold(BigDecimal.ZERO) { acc, line -> acc.add(line.amount) }
         val sideLabel: String
         val sideValue: String
@@ -113,10 +117,10 @@ object PdfExporter {
                 sideValue = "Samme som beregnet grunnlag"
             }
         }
-        w.summaryAmount(amountLabel, s.calculation.paymentBasisAmount, sideLabel, sideValue)
+        w.summaryAmount(amountLabel, calculation.paymentBasisAmount, sideLabel, sideValue)
 
         if (!s.settlement.usesFullCalculation) {
-            val difference = s.calculation.paymentBasisAmount.subtract(s.settlement.proposedAmount)
+            val difference = calculation.paymentBasisAmount.subtract(s.settlement.proposedAmount)
             w.summaryDifference("Forskjell fra beregnet betalingsgrunnlag", difference)
             if (s.settlement.reason.isNotBlank()) w.smallText("Begrunnelse for annet beløp: ${s.settlement.reason}")
         }
@@ -126,9 +130,9 @@ object PdfExporter {
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
 
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
-            val coveredSupplement = s.calculation.alreadyCoveredByNormalRosterAmount
+            val coveredSupplement = calculation.alreadyCoveredByNormalRosterAmount
             val coveredText = buildString {
-                append("I denne beregningen er det lagt til grunn at Oslo kommune utbetaler ordinær lønn og turnustillegg etter grunnturnusen. Den delen av grunnturnusen som overlapper turen utgjør ${minutes(s.calculation.rosterMinutes)}.")
+                append("I denne beregningen er det lagt til grunn at Oslo kommune utbetaler ordinær lønn og turnustillegg etter grunnturnusen. Den delen av grunnturnusen som overlapper turen utgjør ${minutes(calculation.rosterMinutes)}.")
                 if (coveredSupplement > BigDecimal.ZERO) {
                     append(" Beregnede turnustillegg fra grunnturnusen: ${money(coveredSupplement)}.")
                 }
@@ -140,15 +144,21 @@ object PdfExporter {
         }
 
         w.h2("Slik er beløpet satt sammen")
-        s.calculation.lines
-            .filter { it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS && it.amount != BigDecimal.ZERO }
-            .forEach { line -> w.moneyRow(plainLineTitle(line), plainFormula(line), line.amount) }
+        calculation.lineEntries
+            .filter { it.line.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS && it.line.amount != BigDecimal.ZERO }
+            .forEach { entry ->
+                w.moneyRow(
+                    presentationLineTitle(s, entry),
+                    plainFormula(entry.line),
+                    entry.line.amount,
+                )
+            }
 
         val reviewFindings = s.findings.filter { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
         w.h2("Status")
         w.statusRow("Lønnsopplysninger", if (s.payslipChecked) "Kontrollert mot lønnsslipp" else "Må kontrolleres", if (s.payslipChecked) PdfTone.OK else PdfTone.WARNING)
-        if (s.calculation.rosterUncoveredMinutes > 0L) {
-            w.statusRow("Turnussammenligning", "${minutes(s.calculation.rosterUncoveredMinutes)} uten registrert arbeidsperiode · kontrollert", PdfTone.INFO)
+        if (calculation.rosterUncoveredMinutes > 0L) {
+            w.statusRow("Turnussammenligning", "${minutes(calculation.rosterUncoveredMinutes)} uten registrert arbeidsperiode · kontrollert", PdfTone.INFO)
         }
         w.statusRow(
             "Beregning",
@@ -174,7 +184,9 @@ object PdfExporter {
                 " Beløpet kan derfor bli høyere når regelen er avklart."
             }
             w.warningLine(sentenceWithFollowUp(
-                "Betalingsforslaget er ikke endelig: ${s.unresolvedRules.joinToString("; ") { plainRuleTitle(it, rateSet) }}",
+                "Betalingsforslaget er ikke endelig: ${s.unresolvedRules.joinToString("; ") { rule ->
+                    presentationRuleRateSet(s, rule.id)?.let { resolved -> plainRuleTitle(rule, resolved) } ?: rule.title
+                }}",
                 extra,
             ))
         }
@@ -182,12 +194,18 @@ object PdfExporter {
         if (includeFooter) {
             w.rule()
             w.smallText(shortFooterDescription(s.rosterComparisonMode))
-            w.footerMeta("Lønnstrinn ${s.salaryStep} · ${weeklyBasisLabel(s.weeklyBasis)} full arbeidsuke · ${rateSet.weekendRate(s.weekendProfile).label}")
+            val tariffFooter = if (s.hasMultipleTariffContexts) {
+                "${s.tariffContexts.size} tariff-/lønnskontekster"
+            } else {
+                rateSet.weekendRate(s.weekendProfile).label
+            }
+            w.footerMeta("Lønnstrinn ${s.salaryStep} · ${weeklyBasisLabel(s.weeklyBasis)} full arbeidsuke · $tariffFooter")
             w.footerMeta("Beregning-ID ${s.id} · opprettet ${dateTime(s.createdAt)}")
         }
     }
 
     private fun writeRosterAndPlan(w: PdfWriter, s: FinalizedTripSnapshot) {
+        val calculation = s.presentation
         w.h1("Arbeidsgrunnlaget")
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER && s.roster.isNotEmpty()) {
             w.h2("Grunnturnus")
@@ -200,19 +218,19 @@ object PdfExporter {
                 }
                 w.compactRow(date(row.date), "${row.code} ${row.label}", time)
             }
-            val restingInside = (s.calculation.restingNightMinutes - s.calculation.restingNightOutsideRosterMinutes).coerceAtLeast(0)
-            w.summaryLine("Grunnturnustid som overlapper turen", minutes(s.calculation.rosterMinutes))
-            w.summaryLine("Registrert aktivt arbeid/reise innen turnusen", minutes(s.calculation.activeInsideRosterMinutes))
+            val restingInside = (calculation.restingNightMinutes - calculation.restingNightOutsideRosterMinutes).coerceAtLeast(0)
+            w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
+            w.summaryLine("Registrert aktivt arbeid/reise innen turnusen", minutes(calculation.activeInsideRosterMinutes))
             if (restingInside > 0) w.summaryLine("Registrert hvilende nattevakt innen turnusen", minutes(restingInside))
-            if (s.calculation.rosterUncoveredMinutes > 0) {
-                w.summaryLine("Turnustid uten registrert arbeidsperiode på turen", "${minutes(s.calculation.rosterUncoveredMinutes)} · kontrollert")
-                s.calculation.rosterUncoveredEvidence.forEach { evidence ->
+            if (calculation.rosterUncoveredMinutes > 0) {
+                w.summaryLine("Turnustid uten registrert arbeidsperiode på turen", "${minutes(calculation.rosterUncoveredMinutes)} · kontrollert")
+                calculation.rosterUncoveredEvidence.forEach { evidence ->
                     val period = "${date(evidence.start.toLocalDate())} kl. ${clock(evidence.start)}-${clock(evidence.end)}"
                     w.compactRow(period, "Ingen registrert arbeidsperiode", "Kontrollert")
                 }
             }
-            if (s.calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
-                w.summaryLine("Turnustillegg fra grunnturnusen - ikke med i betalingsgrunnlaget", money(s.calculation.alreadyCoveredByNormalRosterAmount))
+            if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
+                w.summaryLine("Turnustillegg fra grunnturnusen - ikke med i betalingsgrunnlaget", money(calculation.alreadyCoveredByNormalRosterAmount))
             }
             w.space(5)
         } else {
@@ -233,43 +251,51 @@ object PdfExporter {
     }
 
     private fun writeCalculationDetails(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet) {
+        val calculation = s.presentation
         w.h1("Hvorfor blir beløpet slik?")
         w.p("Hver post under viser hva som er beregnet, hvordan beløpet er regnet og hvilken regel som er brukt.")
 
-        s.calculation.lines
-            .filter { it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS }
-            .forEach { line -> writeDetailedLine(w, line, rateSet, alreadyCovered = false) }
+        calculation.lineEntries
+            .filter { it.line.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS }
+            .forEach { entry -> writeDetailedLine(w, s, entry, rateSet, alreadyCovered = false) }
 
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
             w.h2("Grunnturnus - forutsetning i beregningen")
             w.p("Grunnturnusen brukes her som appens sammenligningsgrunnlag for hva som er forutsatt dekket gjennom ordinær lønn og turnustillegg. Dette er en modellforutsetning, ikke en gjengivelse av ordlyden i Dok. 25 punkt 20.2. Punkt 20.2 omtaler egen arbeidsplan før reisen, gjennomsnittsberegning og kompensasjon for arbeidstid ut over ordinær arbeidstid etter kapittel 8. Hvilken arbeidstidsordning som faktisk gjelder for ferieoppholdet må avklares med arbeidsgiver. Turnusen vises for kontroll og legges ikke til betalingsgrunnlaget.")
-            w.summaryLine("Grunnturnustid som overlapper turen", minutes(s.calculation.rosterMinutes))
-            if (s.calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
-                w.summaryLine("Turnustillegg beregnet fra grunnturnusen", money(s.calculation.alreadyCoveredByNormalRosterAmount))
+            w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
+            if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
+                w.summaryLine("Turnustillegg beregnet fra grunnturnusen", money(calculation.alreadyCoveredByNormalRosterAmount))
             }
         }
 
-        val openLines = s.calculation.lines
-            .filter { it.paymentTreatment == PaymentTreatment.OPEN }
-            .filter(::shouldRenderDetailedLine)
+        val openLines = calculation.lineEntries
+            .filter { it.line.paymentTreatment == PaymentTreatment.OPEN }
+            .filter { shouldRenderDetailedLine(it.line) }
         if (openLines.isNotEmpty()) {
             val first = openLines.first()
             w.keepH2WithFirstDetailBlock(
                 heading = "Beløp eller regler som må avklares",
-                title = plainLineTitle(first),
-                formula = plainFormula(first),
-                explanation = plainLineExplanation(first, rateSet),
-                source = first.source,
+                title = presentationLineTitle(s, first),
+                formula = plainFormula(first.line),
+                explanation = presentationLineExplanation(s, first, rateSet),
+                source = first.line.source,
             )
             w.h2("Beløp eller regler som må avklares")
-            openLines.forEach { line -> writeDetailedLine(w, line, rateSet, alreadyCovered = false) }
+            openLines.forEach { entry -> writeDetailedLine(w, s, entry, rateSet, alreadyCovered = false) }
         }
     }
 
     private fun shouldRenderDetailedLine(line: CalculationLine): Boolean =
         !(line.amount == BigDecimal.ZERO && line.paymentTreatment == PaymentTreatment.OPEN && line.certainty != CalculationCertainty.OPEN)
 
-    private fun writeDetailedLine(w: PdfWriter, line: CalculationLine, rateSet: TariffRateSet, alreadyCovered: Boolean) {
+    private fun writeDetailedLine(
+        w: PdfWriter,
+        snapshot: FinalizedTripSnapshot,
+        entry: FinalizedCalculationPresentationLine,
+        fallbackRateSet: TariffRateSet,
+        alreadyCovered: Boolean,
+    ) {
+        val line = entry.line
         if (!shouldRenderDetailedLine(line)) return
         val amountLabel = when {
             line.paymentTreatment == PaymentTreatment.OPEN && line.amount > BigDecimal.ZERO -> "Mulig ${money(line.amount)}"
@@ -278,19 +304,20 @@ object PdfExporter {
             else -> money(line.amount)
         }
         w.detailBlock(
-            title = plainLineTitle(line),
+            title = presentationLineTitle(snapshot, entry),
             amount = amountLabel,
             formula = plainFormula(line),
-            explanation = plainLineExplanation(line, rateSet),
+            explanation = presentationLineExplanation(snapshot, entry, fallbackRateSet),
             source = line.source,
             warning = line.paymentTreatment == PaymentTreatment.OPEN,
         )
     }
 
     private fun writeDayAudit(w: PdfWriter, s: FinalizedTripSnapshot) {
+        val calculation = s.presentation
         w.h1("Dag for dag")
         w.p("Her kan du kontrollere hva hver kalenderdag bidrar med. Summen til høyre er beløpet som kommer i tillegg den dagen. Grunnturnusen er dokumentert i arbeidsgrunnlaget og gjentas ikke her.")
-        s.calculation.dayAudits.forEach { day ->
+        calculation.dayAudits.forEach { day ->
             val holidayText = day.holidayLabels.takeIf { it.isNotEmpty() }?.let { "Høytidsperiode: ${it.joinToString()}" }
             val visible = day.contributions.filter { it.paymentTreatment != PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER }
             val rows = visible.map { c ->
@@ -312,21 +339,22 @@ object PdfExporter {
             warningText?.let(w::warningLine)
         }
 
-        val stayAllowance = s.calculation.lines.firstOrNull {
+        val stayAllowance = calculation.lines.firstOrNull {
             it.id == "stay-allowance" && it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS
         }?.amount ?: BigDecimal.ZERO.setScale(2)
-        val distributed = s.calculation.dayAudits.fold(BigDecimal.ZERO) { acc, day -> acc.add(day.paymentSubtotal) }.setScale(2)
+        val distributed = calculation.dayAudits.fold(BigDecimal.ZERO) { acc, day -> acc.add(day.paymentSubtotal) }.setScale(2)
         w.keepTogether(66f)
         w.rule()
         w.summaryLine("Sum fordelt på kalenderdager", money(distributed), strong = true)
         if (stayAllowance > BigDecimal.ZERO) {
             w.summaryLine("Døgngodtgjøring - gjelder hele reisen", money(stayAllowance))
         }
-        w.summaryLine("Totalt betalingsgrunnlag", money(s.calculation.paymentBasisAmount), strong = true)
+        w.summaryLine("Totalt betalingsgrunnlag", money(calculation.paymentBasisAmount), strong = true)
         w.smallText("Dagsbeløp fordeles til øre slik at de summerer tilbake til hovedpostene. Små avrundingsforskjeller kan derfor forekomme på enkeltdager.")
     }
 
     private fun writeGroupedControl(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet, includeDetails: Boolean) {
+        val calculation = s.presentation
         w.h1("Arbeidstid som bør vurderes")
         w.p("Appen viser forhold i arbeidsplanen som bør kontrolleres mot arbeidstidsordningen som gjelder. Den avgjør ikke om arbeidsordningen er lovlig.")
         w.compactNote("Hvilende nattevakt og arbeidstid", "Hvilende nattevakt regnes som arbeidstid når arbeidstiden kontrolleres, selv om betalingen beregnes annerledes.")
@@ -359,11 +387,19 @@ object PdfExporter {
         } else {
             s.unresolvedRules.forEach { rule ->
                 val possible = possibleAmountForRule(s, rule.id)
+                val ruleRateSet = presentationRuleRateSet(s, rule.id)
                 val explanation = buildString {
-                    append(plainRuleExplanation(rule, rateSet))
+                    append(
+                        if (ruleRateSet != null) {
+                            plainRuleExplanation(rule, ruleRateSet)
+                        } else {
+                            multiContextRuleExplanation(rule)
+                        },
+                    )
                     if (possible > BigDecimal.ZERO) append(" Med dagens registrerte timer og satser er mulig tillegg ${money(possible)}. Beløpet er ikke inkludert i betalingsgrunnlaget.")
                 }
-                w.openRule(plainRuleTitle(rule, rateSet), explanation, rule.source)
+                val title = if (ruleRateSet != null) plainRuleTitle(rule, ruleRateSet) else rule.title
+                w.openRule(title, explanation, rule.source)
             }
         }
     }
@@ -375,16 +411,48 @@ object PdfExporter {
         w.summaryLine("Betalingsscenario", payingPartyLabel(s.payingParty))
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
         w.summaryLine("Regler appen bruker", s.ruleBasis)
-        w.summaryLine("Lønnstabell", "${s.salaryTableSourceLabel} · fra ${date(s.salaryTableEffectiveFrom)}")
-        w.summaryLine("Lønnstrinn", s.salaryStep.toString())
-        w.summaryLine("Årslønn", money(s.annualSalary))
-        w.summaryLine("Full arbeidsuke", weeklyBasisLabel(s.weeklyBasis))
-        w.summaryLine("Lørdags- og søndagssats", rateSet.weekendRate(s.weekendProfile).label)
-        w.summaryLine("Kontrollert mot lønnsslipp", if (s.payslipChecked) "Ja" else "Nei")
+
+        if (s.tariffContexts.size == 1) {
+            val context = s.tariffContexts.single()
+            // Preserve the qualified single-context PDF ordering exactly.
+            w.summaryLine("Lønnstabell", "${context.salaryTableSourceLabel} · fra ${date(context.salaryTableEffectiveFrom)}")
+            w.summaryLine("Lønnstrinn", s.salaryStep.toString())
+            w.summaryLine("Årslønn", money(context.annualSalary))
+            w.summaryLine("Full arbeidsuke", weeklyBasisLabel(s.weeklyBasis))
+            w.summaryLine("Lørdags- og søndagssats", rateSet.weekendRate(s.weekendProfile).label)
+            w.summaryLine("Kontrollert mot lønnsslipp", if (s.payslipChecked) "Ja" else "Nei")
+        } else {
+            w.summaryLine("Lønnstrinn", s.salaryStep.toString())
+            w.summaryLine("Full arbeidsuke", weeklyBasisLabel(s.weeklyBasis))
+            w.summaryLine("Kontrollert mot lønnsslipp", if (s.payslipChecked) "Ja" else "Nei")
+            w.h2("Tariff- og lønnskontekster")
+            w.p("Turen krysser en virkningsdato. Hver periode under er beregnet med sitt eget fryste sats- og lønnsgrunnlag.")
+            s.tariffContexts.forEachIndexed { index, context ->
+                val contextRateSet = FerieturTariffRates.forId(context.tariffRateSetId)
+                val period = if (context.start == context.end) date(context.start) else "${date(context.start)}–${date(context.end)}"
+                w.compactRow(
+                    "Periode ${index + 1}: $period",
+                    context.salaryTableSourceLabel,
+                    "${money(context.annualSalary)} · ${money(context.hourlyRate)}/t",
+                )
+                contextRateSet?.let { resolved ->
+                    w.smallText("Lørdags-/søndagssats: ${resolved.weekendRate(s.weekendProfile).label}")
+                }
+                w.footerMeta(
+                    "Tariffpakke-ID: ${context.tariffPackageId} · satssett-ID: ${context.tariffRateSetId} · " +
+                        "lønnstabell-ID: ${context.salaryTableId}",
+                )
+            }
+        }
+
         w.rule()
         w.footerMeta("Regelversjon: FERIETUR01 ${s.rulesetVersion} · appversjon: ${s.appVersionName} · build ${s.appVersionCode}")
-        w.footerMeta("Tariffpakke-ID: ${s.tariffPackageId} · satssett-ID: ${s.tariffRateSetId}")
-        w.footerMeta("Lønnstabell-ID: ${s.salaryTableId} · gyldig fra ${date(s.salaryTableEffectiveFrom)}")
+        if (s.tariffContexts.size == 1) {
+            w.footerMeta("Tariffpakke-ID: ${s.tariffPackageId} · satssett-ID: ${s.tariffRateSetId}")
+            w.footerMeta("Lønnstabell-ID: ${s.salaryTableId} · gyldig fra ${date(s.salaryTableEffectiveFrom)}")
+        } else {
+            w.footerMeta("Tariffkontekster: ${s.tariffContexts.size} · se periodene over for sats- og lønnstabell-ID-er")
+        }
         w.footerMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")
     }
 
@@ -399,6 +467,70 @@ object PdfExporter {
         PayingParty.RESIDENT_OR_GUARDIAN -> "Beboer/verge"
         PayingParty.OTHER -> "Annet"
         PayingParty.UNSPECIFIED -> "Ikke avklart ennå"
+    }
+
+    private fun presentationLineTitle(
+        snapshot: FinalizedTripSnapshot,
+        entry: FinalizedCalculationPresentationLine,
+    ): String {
+        val base = plainLineTitle(entry.line)
+        if (!snapshot.hasMultipleTariffContexts || entry.scope != TariffCalculationLineScope.SEGMENT_LOCAL) {
+            return base
+        }
+        val context = entry.tariffContextIndex?.let(snapshot.tariffContexts::getOrNull) ?: return base
+        val period = if (context.start == context.end) date(context.start) else "${date(context.start)}–${date(context.end)}"
+        return "$base · $period"
+    }
+
+    private fun presentationLineExplanation(
+        snapshot: FinalizedTripSnapshot,
+        entry: FinalizedCalculationPresentationLine,
+        fallbackRateSet: TariffRateSet,
+    ): String {
+        val resolved = snapshot.presentation.rateSetForLine(entry)
+        return when {
+            resolved != null -> plainLineExplanation(entry.line, resolved)
+            snapshot.hasMultipleTariffContexts && entry.line.explanation.isNotBlank() -> entry.line.explanation
+            else -> plainLineExplanation(entry.line, fallbackRateSet)
+        }
+    }
+
+    private fun presentationRuleRateSet(snapshot: FinalizedTripSnapshot, ruleId: String): TariffRateSet? {
+        if (!snapshot.hasMultipleTariffContexts) return FerieturTariffRates.forId(snapshot.tariffRateSetId)
+        val lineIds: Set<String> = when (ruleId) {
+            "D25_18_4_NOTICE" -> setOf("travel-notice-open")
+            "D25_18_4_X13_7_3" -> setOf("travel-short-notice-133-open")
+            "D25_20_3_SLEEP_PERMISSION" -> setOf("travel-night-sleep-open")
+            "D25_20_6_EXACT_THRESHOLD" -> setOf("stay-allowance-exact-threshold-open")
+            else -> emptySet()
+        }
+        val relevant = snapshot.presentation.lineEntries.filter { it.line.id in lineIds }
+        val rateSetIds = relevant.mapNotNull { entry ->
+            snapshot.presentation.contextForLine(entry)?.tariffRateSetId
+        }.distinct()
+        if (rateSetIds.size == 1) return FerieturTariffRates.forId(rateSetIds.single())
+
+        // Whole-trip rules may intentionally have no single presentation slice.
+        // A4A4 already requires their numeric policy to be identical before a
+        // segmented monetary result is allowed, so the shared control rate set
+        // is safe when one exists.
+        return FinalizedCalculationPresentations.sharedControlRateSet(snapshot.tariffContexts)
+    }
+
+    private fun multiContextRuleExplanation(rule: DomainRule): String = when (rule.id) {
+        "D25_20_3_SLEEP_PERMISSION" ->
+            "Søvntillatelse må avklares for de registrerte nattreiseperiodene. Se beregningspostene for " +
+                "tidsvindu og satsgrunnlag i hver tariffkontekst."
+        "D25_18_4_NOTICE" ->
+            "Varseltidspunktet for reisen må avklares. Se beregningspostene for hvilket satsgrunnlag som " +
+                "gjelder i hver tariffkontekst."
+        "D25_18_4_X13_7_3" ->
+            "Den særskilte overtidsprosenten må avklares mot arbeidstakerens tariffstatus. Ferietur bruker " +
+                "ikke én felles prosenttekst når turen har flere tariffkontekster."
+        "D25_20_6_EXACT_THRESHOLD" ->
+            "Nøyaktig resttid på terskelen for døgngodtgjøring er fortsatt et åpent tolkningspunkt. " +
+                "Mulig beløp vises separat og er ikke lagt inn i betalingsgrunnlaget."
+        else -> "Denne regelen må avklares før beregningen kan regnes som komplett."
     }
 
     private fun plainLineTitle(line: CalculationLine): String = when (line.id) {
@@ -592,12 +724,13 @@ object PdfExporter {
         rateSet.specialOvertimePercentageLabel
 
     private fun possibleAmountForRule(s: FinalizedTripSnapshot, ruleId: String): BigDecimal {
+        val calculation = s.presentation
         val lineIds: Set<String> = when (ruleId) {
             "D25_18_4_NOTICE" -> setOf("travel-notice-open")
             "D25_18_4_X13_7_3" -> setOf("travel-short-notice-133-open")
             else -> emptySet()
         }
-        return s.calculation.lines
+        return calculation.lines
             .filter { it.id in lineIds && it.paymentTreatment == PaymentTreatment.OPEN }
             .fold(BigDecimal.ZERO) { acc, line -> acc.add(line.amount) }
             .setScale(2)

@@ -241,8 +241,10 @@ data class FinalizedTripSnapshot(
     }
 
     /**
-     * Legacy single-context view used by the current UI/PDF path. A segmented
-     * snapshot deliberately has no synthetic hourly-rate calculation.
+     * Compatibility view for callers that explicitly require the historical
+     * single-context calculation. Finalized summary/PDF presentation uses
+     * [presentation] and therefore never asks a segmented snapshot for a fake
+     * single hourly rate.
      */
     val calculation: PreliminaryCalculation
         get() = requireNotNull(calculationPayload.preliminaryOrNull) {
@@ -250,14 +252,23 @@ data class FinalizedTripSnapshot(
         }
 
     val preliminaryCalculationOrNull: PreliminaryCalculation? get() = calculationPayload.preliminaryOrNull
+    val presentation: FinalizedCalculationPresentation
+        get() = FinalizedCalculationPresentations.fromSnapshot(this)
     val hasSegmentedCalculation: Boolean
         get() = calculationPayload.mode == FinalizedCalculationPayloadMode.SEGMENTED_CONTEXTS
     val hasMultipleTariffContexts: Boolean get() = tariffContexts.size > 1
 
     val ruleBasis: String get() = when (employerKind) {
         EmployerKind.OSLO_KOMMUNE -> {
-            val tariffLabel = FerieturTariffs.packageForId(tariffPackageId)?.label ?: tariffPackageId
-            "Oslo kommune – $tariffLabel, kapittel 20"
+            val packageLabels = tariffContexts
+                .map { context -> FerieturTariffs.packageForId(context.tariffPackageId)?.label ?: context.tariffPackageId }
+                .distinct()
+            if (packageLabels.size == 1) {
+                val suffix = if (hasMultipleTariffContexts) " · ${tariffContexts.size} tariff-/lønnskontekster" else ""
+                "Oslo kommune – ${packageLabels.single()}, kapittel 20$suffix"
+            } else {
+                "Oslo kommune – ${packageLabels.joinToString(" / ")}, kapittel 20"
+            }
         }
         else -> employerKind.ruleBasisLabel()
     }
@@ -267,6 +278,141 @@ data class FinalizedTripSnapshot(
 }
 
 object FinalizedTripSnapshotBuilder {
+    /**
+     * Builds a finalized snapshot from the effective-dated runtime calculation
+     * without collapsing multiple salary/rate contexts into one hourly rate.
+     *
+     * Compose is not wired to this entry point yet; it is the finalization
+     * contract that A4A10 can call after obtaining a successful runtime result.
+     */
+    fun buildFromRuntime(
+        title: String,
+        employerKind: EmployerKind,
+        payingParty: PayingParty,
+        rosterComparisonMode: RosterComparisonMode,
+        dates: List<LocalDate>,
+        roster: Map<LocalDate, String>,
+        plans: Map<LocalDate, List<PlannedBlock>>,
+        salaryStep: Int,
+        weeklyBasis: WeeklyBasis,
+        weekendProfile: WeekendProfile,
+        payslipChecked: Boolean,
+        rosterGapConfirmed: Boolean = false,
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+        runtimeCalculation: TariffRuntimeCalculation,
+        settlement: SettlementSnapshot,
+        snapshotId: String = UUID.randomUUID().toString(),
+        createdAt: LocalDateTime = LocalDateTime.now(),
+        appVersionName: String = "test",
+        appVersionCode: Int = 0,
+    ): FinalizedTripSnapshot {
+        require(TripPlanEngine.chapter20Applies(tripStart, tripEnd)) {
+            "Dok. 25 kapittel 20 gjelder ikke dagsturer"
+        }
+        TripDateRangePolicy.requireCompleteCoverage(
+            dates = dates,
+            start = tripStart.toLocalDate(),
+            end = tripEnd.toLocalDate(),
+        )
+        val workBlocks = TripPlanEngine.projectRange(dates, plans)
+        require(TripPlanEngine.outsideTripRangeBlocks(workBlocks, tripStart, tripEnd).isEmpty()) {
+            "Arbeidsplanen inneholder arbeid utenfor turperioden"
+        }
+        require(!TripPlanEngine.hasUnintendedOverlap(workBlocks)) {
+            "Arbeidsplanen inneholder overlappende perioder"
+        }
+        require(settlement.calculatedAmount.setScale(2) == runtimeCalculation.paymentBasisAmount.setScale(2)) {
+            "Betalingsgrunnlaget samsvarer ikke med runtime-beregningen"
+        }
+
+        val tariffContexts = FinalizedTariffContextSnapshots.fromRuntime(runtimeCalculation)
+        require(tariffContexts.isNotEmpty()) { "Runtime-beregningen mangler tariffproveniens." }
+        val occupied = requireNotNull(TariffEffectiveDateRange.forTrip(tripStart, tripEnd)) {
+            "Ugyldig turperiode."
+        }
+        require(tariffContexts.first().start == occupied.start && tariffContexts.last().end == occupied.end) {
+            "Runtime-beregningens tariffkontekster dekker ikke hele turperioden."
+        }
+        require(tariffContexts.all { it.rulesetVersion == runtimeCalculation.rulesetVersion }) {
+            "Runtime-beregningen inneholder flere semantiske regelsett."
+        }
+
+        val rosterGapEvidence = if (rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+            TripPlanEngine.rosterUncoveredEvidence(workBlocks, roster, tripStart, tripEnd)
+        } else {
+            emptyList()
+        }
+        require(rosterGapEvidence.isEmpty() || rosterGapConfirmed) {
+            "Turnustid uten registrert arbeidsperiode må kontrolleres før ferdigstilling"
+        }
+
+        val unresolvedRules = FerieturRules.applicableUnresolvedRules(
+            runtimeCalculation.applicableUnresolvedRuleIds,
+        )
+        val controlRateSet = requireNotNull(
+            FinalizedCalculationPresentations.sharedControlRateSet(tariffContexts),
+        ) {
+            "Tariffkontekstene bruker ulike tids-/kontrollparametere. Presentasjons- og kontrollgrunnlaget må " +
+                "koordineres eksplisitt før turen kan ferdigstilles."
+        }
+        val findings = TripPlanEngine.controlFindings(
+            blocks = workBlocks,
+            unresolvedRuleCount = unresolvedRules.size,
+            roster = roster,
+            rateSet = controlRateSet,
+        )
+        val rosterRows = if (rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+            dates.flatMap { date ->
+                RosterEntryCodec.decode(roster[date]).map { shift ->
+                    val interval = TurnusOverlapEngine.intervalFor(date, shift)
+                    RosterSnapshotRow(
+                        date = date,
+                        code = shift.code,
+                        label = shift.label,
+                        start = interval?.first,
+                        end = interval?.second,
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
+        val primary = tariffContexts.first()
+        UUID.fromString(snapshotId)
+        return FinalizedTripSnapshot(
+            id = snapshotId,
+            createdAt = createdAt,
+            appVersionName = appVersionName,
+            appVersionCode = appVersionCode,
+            rulesetVersion = runtimeCalculation.rulesetVersion,
+            tariffPackageId = primary.tariffPackageId,
+            tariffRateSetId = primary.tariffRateSetId,
+            salaryTableId = primary.salaryTableId,
+            salaryTableEffectiveFrom = primary.salaryTableEffectiveFrom,
+            salaryTableSourceLabel = primary.salaryTableSourceLabel,
+            tariffContexts = tariffContexts,
+            title = title,
+            tripStart = tripStart,
+            tripEnd = tripEnd,
+            employerKind = employerKind,
+            payingParty = payingParty,
+            rosterComparisonMode = rosterComparisonMode,
+            salaryStep = salaryStep,
+            annualSalary = primary.annualSalary,
+            weeklyBasis = weeklyBasis,
+            weekendProfile = weekendProfile,
+            payslipChecked = payslipChecked,
+            rosterGapConfirmed = rosterGapConfirmed,
+            roster = rosterRows,
+            workBlocks = workBlocks,
+            calculationPayload = FinalizedCalculationPayload.fromRuntime(runtimeCalculation),
+            settlement = settlement,
+            findings = findings,
+            unresolvedRules = unresolvedRules,
+        )
+    }
+
     fun build(
         title: String,
         employerKind: EmployerKind,

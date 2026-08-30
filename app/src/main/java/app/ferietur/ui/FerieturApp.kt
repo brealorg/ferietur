@@ -5644,12 +5644,13 @@ private fun FinalSummaryScreen(
         return
     }
 
+    val presentation = snapshot.presentation
     val reviewCount = snapshot.findings.count {
         it.severity == FindingSeverity.REVIEW ||
             it.severity == FindingSeverity.CRITICAL
     }
     val registrationOk =
-        snapshot.calculation.rosterUncoveredMinutes == 0L ||
+        presentation.rosterUncoveredMinutes == 0L ||
             snapshot.rosterGapConfirmed
 
     LazyColumn(
@@ -5707,7 +5708,7 @@ private fun FinalSummaryScreen(
                         style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
-                        currency(snapshot.calculation.paymentBasisAmount),
+                        currency(presentation.paymentBasisAmount),
                         style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Black,
                     )
@@ -5718,7 +5719,7 @@ private fun FinalSummaryScreen(
                             "Betalingsforslag ${currency(snapshot.settlement.proposedAmount)} · " +
                                 "forskjell ${
                                     currency(
-                                        snapshot.calculation.paymentBasisAmount
+                                        presentation.paymentBasisAmount
                                             .subtract(snapshot.settlement.proposedAmount),
                                     )
                                 }."
@@ -5842,10 +5843,19 @@ private fun FinalSummaryScreen(
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
 
+                if (snapshot.hasMultipleTariffContexts) {
+                    FinalSummaryStatusRow(
+                        label = "Tariffgrunnlag",
+                        value = "${snapshot.tariffContexts.size} perioder",
+                        resolved = true,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
+                }
+
                 FinalSummaryStatusRow(
                     label = "Registrering",
                     value = when {
-                        snapshot.calculation.rosterUncoveredMinutes == 0L ->
+                        presentation.rosterUncoveredMinutes == 0L ->
                             "Ingen feil"
                         snapshot.rosterGapConfirmed ->
                             "Kontrollert"
@@ -5908,7 +5918,7 @@ private fun FinalSummaryScreen(
                     supportingContent = {
                         Text(
                             "Avtalt ${currency(snapshot.settlement.proposedAmount)} · " +
-                                "beregnet ${currency(snapshot.calculation.paymentBasisAmount)}. " +
+                                "beregnet ${currency(presentation.paymentBasisAmount)}. " +
                                 snapshot.settlement.reason,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 3,
@@ -5937,7 +5947,7 @@ private fun FinalSummaryScreen(
                     },
                     supportingContent = {
                         Text(
-                            "${minutesUi(snapshot.calculation.rosterMinutes)} overlapper turen.",
+                            "${minutesUi(presentation.rosterMinutes)} overlapper turen.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     },

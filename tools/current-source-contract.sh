@@ -29,6 +29,7 @@ for f in \
     app/src/main/java/app/ferietur/domain/SavedTripDraft.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt \
+    app/src/main/java/app/ferietur/domain/FinalizedCalculationPresentation.kt \
     app/src/main/java/app/ferietur/domain/SavedTripDraftMigrator.kt \
     app/src/main/java/app/ferietur/ui/TripLibraryPolicy.kt \
     app/src/main/java/app/ferietur/export/PdfExporter.kt \
@@ -61,6 +62,7 @@ salary_tables = (root/'app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt
 draft = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraft.kt').read_text(encoding='utf-8')
 finalized = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt').read_text(encoding='utf-8')
 snapshot_codec = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt').read_text(encoding='utf-8')
+finalized_presentation = (root/'app/src/main/java/app/ferietur/domain/FinalizedCalculationPresentation.kt').read_text(encoding='utf-8')
 migrator = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraftMigrator.kt').read_text(encoding='utf-8')
 library_policy = (root/'app/src/main/java/app/ferietur/ui/TripLibraryPolicy.kt').read_text(encoding='utf-8')
 store = (root/'app/src/main/java/app/ferietur/data/TripDraftStore.kt').read_text(encoding='utf-8')
@@ -270,6 +272,27 @@ req('private const val FORMAT_VERSION = 4' in snapshot_codec, 'snapshot_v4_write
 req('FinalizedCalculationPayload.Preliminary(readCalculation())' in snapshot_codec, 'legacy_calculation_payload_synthesis_missing')
 req('writeList(value.lineEntries) { writeScopedCalculationLine(it) }' in snapshot_codec, 'segmented_scoped_lines_not_persisted')
 print('CURRENT_SEGMENTED_SNAPSHOT_CALCULATION_PAYLOAD_CONTRACT=PASS')
+
+# A4A9 finalized presentation/finalization bridge contract.
+req('data class FinalizedCalculationPresentation' in finalized_presentation, 'finalized_calculation_presentation_missing')
+req('data class FinalizedCalculationPresentationLine' in finalized_presentation, 'presentation_line_context_missing')
+req('fun fromSnapshot(snapshot: FinalizedTripSnapshot)' in finalized_presentation, 'snapshot_to_presentation_bridge_missing')
+req('TripPlanEngine.buildDayAudits(' in finalized_presentation, 'segmented_day_audit_reconstruction_missing')
+req('deriveFrozenRosterAudit(snapshot)' in finalized_presentation, 'frozen_roster_audit_reconstruction_missing')
+req('fun sharedControlRateSet(contexts: List<FinalizedTariffContextSnapshot>)' in finalized_presentation, 'shared_control_rateset_gate_missing')
+req('val presentation: FinalizedCalculationPresentation' in finalized, 'snapshot_presentation_accessor_missing')
+req('fun buildFromRuntime(' in finalized and 'runtimeCalculation: TariffRuntimeCalculation' in finalized, 'segmented_finalization_builder_missing')
+req('FinalizedTariffContextSnapshots.fromRuntime(runtimeCalculation)' in finalized, 'runtime_finalization_provenance_not_frozen')
+req('FinalizedCalculationPayload.fromRuntime(runtimeCalculation)' in finalized, 'runtime_finalization_payload_not_frozen')
+req('FinalizedCalculationPresentations.sharedControlRateSet(tariffContexts)' in finalized, 'finalization_shared_control_policy_not_guarded')
+req('applicableUnresolvedRules(ruleIds: Set<String>)' in (root/'app/src/main/java/app/ferietur/domain/Rules.kt').read_text(encoding='utf-8'), 'runtime_unresolved_rule_bridge_missing')
+req('val presentation = snapshot.presentation' in ui, 'final_summary_not_using_common_presentation')
+req('snapshot.calculation' not in ui, 'final_summary_single_context_calculation_dependency_regressed')
+req('val calculation = s.presentation' in pdf_exporter, 'pdf_not_using_common_presentation')
+req('s.calculation' not in pdf_exporter, 'pdf_single_context_calculation_dependency_regressed')
+req('presentationLineExplanation' in pdf_exporter and 'rateSetForLine(entry)' in pdf_exporter, 'pdf_per_line_frozen_rateset_presentation_missing')
+req('Tariff- og lønnskontekster' in pdf_exporter and 'context.tariffRateSetId' in pdf_exporter, 'pdf_multi_context_source_provenance_missing')
+print('CURRENT_FINALIZED_PRESENTATION_BRIDGE_CONTRACT=PASS')
 
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')

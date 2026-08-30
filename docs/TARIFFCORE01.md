@@ -579,3 +579,57 @@ entries and unresolved-rule set.
 The outer `SavedTripDraft` schema remains version 6 because finalized snapshots
 are still stored as an opaque codec payload. UI, PDF, calculation money, and the
 runtime gateway are unchanged in this slice.
+
+
+## A4A9 — finalization and presentation bridge
+
+A4A9 migrates the **finalized** summary/PDF surface away from the legacy
+assumption that every finished calculation has one `PreliminaryCalculation` and
+one hourly rate. It still does not switch the live Compose calculation flow to
+the segmented runtime gateway.
+
+`FinalizedCalculationPresentation` is derived only from frozen snapshot data.
+For a `PRELIMINARY` payload it exposes the already-stored lines, day audits,
+roster metrics and monetary totals unchanged. For `SEGMENTED_CONTEXTS` it uses
+the frozen scoped lines from snapshot v4, rebuilds day audits from their frozen
+evidence, and reconstructs roster/control metrics from the snapshot's frozen
+roster rows and work blocks. It never re-runs salary or tariff money logic.
+
+### Per-line tariff provenance in presentation
+
+Segment-local lines retain their `sliceIndex` and are presented with the
+`TariffRateSet` frozen for that context. A PDF therefore cannot explain a line
+calculated after an effective-date boundary using the primary/first period's
+sats. Whole-trip or per-resting-watch lines only receive one context when that
+context is unambiguous; otherwise the already-frozen line explanation is used
+instead of inventing one rate set.
+
+The full PDF lists every frozen tariff/lønn context for a segmented snapshot:
+occupied period, salary source/table, annual salary, hourly rate, rate-set ID and
+tariff-package ID. The single-context PDF ordering and content remain on the
+qualified legacy path.
+
+### Runtime-safe finalization contract
+
+`FinalizedTripSnapshotBuilder.buildFromRuntime(...)` can now freeze an A4A6
+runtime result without collapsing its provenance or calculation payload. It
+revalidates the trip interval, projected work-block bounds/overlap, settlement
+amount, context coverage and unresolved rules before building snapshot v4.
+
+Control findings are still whole-trip presentation data. Finalization therefore
+requires all runtime contexts to agree on the numeric time/control parameters
+used by that copy (travel sleep window, passive-work divisor and short-notice
+limit). If they do not, finalization fails closed until an explicit
+multi-context control policy exists.
+
+### Summary/PDF compatibility boundary
+
+`FinalSummaryScreen` and `PdfExporter` now consume `snapshot.presentation`
+rather than `snapshot.calculation`. A segmented finalized snapshot can therefore
+be rendered without requesting a fake single hourly rate. The summary adds a
+compact `Tariffgrunnlag — N perioder` status only when more than one frozen
+context exists.
+
+The live Compose calculation/finalization flow remains on the existing
+single-context path in A4A9. A4A10 may wire the A4A6 runtime gateway into the
+flow only after this presentation/finalization bridge has qualified.

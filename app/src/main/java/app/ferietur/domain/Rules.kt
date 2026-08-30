@@ -37,8 +37,11 @@ object FerieturRules {
     )
 
     fun applicableUnresolvedRules(calculation: PreliminaryCalculation): List<DomainRule> =
+        applicableUnresolvedRules(calculation.applicableUnresolvedRuleIds)
+
+    fun applicableUnresolvedRules(ruleIds: Set<String>): List<DomainRule> =
         rules.filter { rule ->
-            rule.status == RuleStatus.UNRESOLVED && rule.id in calculation.applicableUnresolvedRuleIds
+            rule.status == RuleStatus.UNRESOLVED && rule.id in ruleIds
         }
 }
 
