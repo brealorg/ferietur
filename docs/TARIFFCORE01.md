@@ -480,3 +480,51 @@ This provenance list is the input contract for the next persistence slice. Until
 snapshot schema v3 (or an equivalent backward-compatible representation) exists,
 the Compose flow remains on the current single-context path and cannot silently
 finalize a multi-context result with only one provenance identity.
+
+## A4A7 — multi-context finalized snapshot provenance
+
+A4A7 upgrades finalized snapshot persistence from format v2 to v3 so one
+finished trip can freeze every tariff/salary context that actually contributed
+to the calculation.
+
+`FinalizedTripSnapshot` now stores an ordered `tariffContexts` list. Each entry
+contains the occupied effective-date range together with:
+
+- tariff package ID;
+- ruleset version;
+- tariff rate-set ID;
+- salary-table ID and effective date;
+- salary source label;
+- frozen annual salary;
+- frozen hourly rate.
+
+The existing scalar tariff/salary fields remain as the primary/first context for
+backward compatibility with the still-single-context UI/PDF surface. A snapshot
+with multiple contexts is therefore identifiable explicitly through
+`hasMultipleTariffContexts`; it must not be rendered through the old single-rate
+presentation path until that surface is migrated.
+
+### Codec v3 and legacy reads
+
+New snapshots are encoded as format v3. The codec still accepts:
+
+- v1 snapshots, where tariff package/rate-set identity is inferred only for the
+  known 2026 ruleset + salary-table combination;
+- v2 snapshots, where the one stored tariff package/rate-set identity is used
+  directly.
+
+Both legacy formats are upgraded in memory to one synthetic frozen tariff
+context covering the effective half-open trip date range. Their already-stored
+annual salary and hourly rate are reused; no newer tariff or salary data is
+consulted during decode.
+
+### Runtime bridge
+
+`FinalizedTariffContextSnapshot.fromRuntime(...)` and
+`FinalizedTariffContextSnapshots.fromRuntime(...)` provide a lossless bridge
+from A4A6 runtime provenance to persistence provenance. This slice intentionally
+does not wire the Compose calculation path yet and does not flatten a segmented
+runtime result into `PreliminaryCalculation`.
+
+The next slice must define the persisted calculation payload for a segmented
+runtime result before Compose can finalize multi-context trips safely.

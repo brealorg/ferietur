@@ -12,7 +12,8 @@ import java.util.Base64
 
 object FinalizedTripSnapshotCodec {
     private const val LEGACY_FORMAT_VERSION = 1
-    private const val FORMAT_VERSION = 2
+    private const val SINGLE_CONTEXT_FORMAT_VERSION = 2
+    private const val FORMAT_VERSION = 3
     private const val LEGACY_UNKNOWN_TARIFF_PACKAGE_ID = "legacy-v1-unknown-tariff-package"
     private const val LEGACY_UNKNOWN_RATE_SET_ID = "legacy-v1-unknown-rate-set"
 
@@ -29,7 +30,11 @@ object FinalizedTripSnapshotCodec {
         val bytes = Base64.getDecoder().decode(encoded)
         return DataInputStream(ByteArrayInputStream(bytes)).use { input ->
             val version = input.readInt()
-            require(version == LEGACY_FORMAT_VERSION || version == FORMAT_VERSION) {
+            require(
+                version == LEGACY_FORMAT_VERSION ||
+                    version == SINGLE_CONTEXT_FORMAT_VERSION ||
+                    version == FORMAT_VERSION,
+            ) {
                 "Unsupported finalized snapshot format: $version"
             }
             input.readSnapshot(version)
@@ -50,6 +55,7 @@ object FinalizedTripSnapshotCodec {
         writeString(snapshot.title)
         writeDateTime(snapshot.tripStart)
         writeDateTime(snapshot.tripEnd)
+        writeList(snapshot.tariffContexts) { writeTariffContext(it) }
         writeString(snapshot.employerKind.name)
         writeString(snapshot.payingParty.name)
         writeString(snapshot.rosterComparisonMode.name)
@@ -73,10 +79,49 @@ object FinalizedTripSnapshotCodec {
         val appVersionName = readString()
         val appVersionCode = readInt()
         val rulesetVersion = readString()
-        val storedTariffPackageId = if (formatVersion >= FORMAT_VERSION) readString() else null
-        val storedTariffRateSetId = if (formatVersion >= FORMAT_VERSION) readString() else null
+        val storedTariffPackageId = if (formatVersion >= SINGLE_CONTEXT_FORMAT_VERSION) readString() else null
+        val storedTariffRateSetId = if (formatVersion >= SINGLE_CONTEXT_FORMAT_VERSION) readString() else null
         val salaryTableId = readString()
+        val salaryTableEffectiveFrom = readDate()
+        val salaryTableSourceLabel = readString()
         val legacyProvenance = legacyTariffProvenance(rulesetVersion, salaryTableId)
+        val tariffPackageId = storedTariffPackageId ?: legacyProvenance.first
+        val tariffRateSetId = storedTariffRateSetId ?: legacyProvenance.second
+        val title = readString()
+        val tripStart = readDateTime()
+        val tripEnd = readDateTime()
+        val storedTariffContexts =
+            if (formatVersion >= FORMAT_VERSION) readList { readTariffContext() } else null
+        val employerKind: EmployerKind = enumValueOf(readString())
+        val payingParty: PayingParty = enumValueOf(readString())
+        val rosterComparisonMode: RosterComparisonMode = enumValueOf(readString())
+        val salaryStep = readInt()
+        val annualSalary = readDecimal()
+        val weeklyBasis: WeeklyBasis = enumValueOf(readString())
+        val weekendProfile: WeekendProfile = enumValueOf(readString())
+        val payslipChecked = readBoolean()
+        val rosterGapConfirmed = readBoolean()
+        val roster = readList { readRosterRow() }
+        val workBlocks = readList { readWorkBlock() }
+        val calculation = readCalculation()
+        val settlement = readSettlement()
+        val findings = readList { readFinding() }
+        val unresolvedRules = readList { readRule() }
+
+        val tariffContexts = storedTariffContexts ?: listOf(
+            legacySingleContext(
+                tripStart = tripStart,
+                tripEnd = tripEnd,
+                tariffPackageId = tariffPackageId,
+                rulesetVersion = rulesetVersion,
+                tariffRateSetId = tariffRateSetId,
+                salaryTableId = salaryTableId,
+                salaryTableEffectiveFrom = salaryTableEffectiveFrom,
+                salaryTableSourceLabel = salaryTableSourceLabel,
+                annualSalary = annualSalary,
+                hourlyRate = calculation.hourlyRate,
+            ),
+        )
 
         return FinalizedTripSnapshot(
             id = id,
@@ -84,29 +129,59 @@ object FinalizedTripSnapshotCodec {
             appVersionName = appVersionName,
             appVersionCode = appVersionCode,
             rulesetVersion = rulesetVersion,
-            tariffPackageId = storedTariffPackageId ?: legacyProvenance.first,
-            tariffRateSetId = storedTariffRateSetId ?: legacyProvenance.second,
+            tariffPackageId = tariffPackageId,
+            tariffRateSetId = tariffRateSetId,
             salaryTableId = salaryTableId,
-            salaryTableEffectiveFrom = readDate(),
-            salaryTableSourceLabel = readString(),
-            title = readString(),
-            tripStart = readDateTime(),
-            tripEnd = readDateTime(),
-            employerKind = enumValueOf(readString()),
-            payingParty = enumValueOf(readString()),
-            rosterComparisonMode = enumValueOf(readString()),
-            salaryStep = readInt(),
-            annualSalary = readDecimal(),
-            weeklyBasis = enumValueOf(readString()),
-            weekendProfile = enumValueOf(readString()),
-            payslipChecked = readBoolean(),
-            rosterGapConfirmed = readBoolean(),
-            roster = readList { readRosterRow() },
-            workBlocks = readList { readWorkBlock() },
-            calculation = readCalculation(),
-            settlement = readSettlement(),
-            findings = readList { readFinding() },
-            unresolvedRules = readList { readRule() },
+            salaryTableEffectiveFrom = salaryTableEffectiveFrom,
+            salaryTableSourceLabel = salaryTableSourceLabel,
+            tariffContexts = tariffContexts,
+            title = title,
+            tripStart = tripStart,
+            tripEnd = tripEnd,
+            employerKind = employerKind,
+            payingParty = payingParty,
+            rosterComparisonMode = rosterComparisonMode,
+            salaryStep = salaryStep,
+            annualSalary = annualSalary,
+            weeklyBasis = weeklyBasis,
+            weekendProfile = weekendProfile,
+            payslipChecked = payslipChecked,
+            rosterGapConfirmed = rosterGapConfirmed,
+            roster = roster,
+            workBlocks = workBlocks,
+            calculation = calculation,
+            settlement = settlement,
+            findings = findings,
+            unresolvedRules = unresolvedRules,
+        )
+    }
+
+    private fun legacySingleContext(
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+        tariffPackageId: String,
+        rulesetVersion: String,
+        tariffRateSetId: String,
+        salaryTableId: String,
+        salaryTableEffectiveFrom: LocalDate,
+        salaryTableSourceLabel: String,
+        annualSalary: BigDecimal,
+        hourlyRate: BigDecimal,
+    ): FinalizedTariffContextSnapshot {
+        val occupied = requireNotNull(TariffEffectiveDateRange.forTrip(tripStart, tripEnd)) {
+            "Legacy finalized snapshot has invalid trip interval."
+        }
+        return FinalizedTariffContextSnapshot(
+            start = occupied.start,
+            end = occupied.end,
+            tariffPackageId = tariffPackageId,
+            rulesetVersion = rulesetVersion,
+            tariffRateSetId = tariffRateSetId,
+            salaryTableId = salaryTableId,
+            salaryTableEffectiveFrom = salaryTableEffectiveFrom,
+            salaryTableSourceLabel = salaryTableSourceLabel,
+            annualSalary = annualSalary,
+            hourlyRate = hourlyRate,
         )
     }
 
@@ -119,6 +194,33 @@ object FinalizedTripSnapshotCodec {
         } else {
             LEGACY_UNKNOWN_TARIFF_PACKAGE_ID to LEGACY_UNKNOWN_RATE_SET_ID
         }
+
+    private fun DataOutputStream.writeTariffContext(value: FinalizedTariffContextSnapshot) {
+        writeDate(value.start)
+        writeDate(value.end)
+        writeString(value.tariffPackageId)
+        writeString(value.rulesetVersion)
+        writeString(value.tariffRateSetId)
+        writeString(value.salaryTableId)
+        writeDate(value.salaryTableEffectiveFrom)
+        writeString(value.salaryTableSourceLabel)
+        writeDecimal(value.annualSalary)
+        writeDecimal(value.hourlyRate)
+    }
+
+    private fun DataInputStream.readTariffContext(): FinalizedTariffContextSnapshot =
+        FinalizedTariffContextSnapshot(
+            start = readDate(),
+            end = readDate(),
+            tariffPackageId = readString(),
+            rulesetVersion = readString(),
+            tariffRateSetId = readString(),
+            salaryTableId = readString(),
+            salaryTableEffectiveFrom = readDate(),
+            salaryTableSourceLabel = readString(),
+            annualSalary = readDecimal(),
+            hourlyRate = readDecimal(),
+        )
 
     private fun DataOutputStream.writeRosterRow(row: RosterSnapshotRow) {
         writeDate(row.date)

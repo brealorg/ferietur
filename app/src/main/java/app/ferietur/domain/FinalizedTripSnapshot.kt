@@ -22,6 +22,50 @@ data class SettlementSnapshot(
     val reason: String,
 )
 
+data class FinalizedTariffContextSnapshot(
+    val start: LocalDate,
+    val end: LocalDate,
+    val tariffPackageId: String,
+    val rulesetVersion: String,
+    val tariffRateSetId: String,
+    val salaryTableId: String,
+    val salaryTableEffectiveFrom: LocalDate,
+    val salaryTableSourceLabel: String,
+    val annualSalary: BigDecimal,
+    val hourlyRate: BigDecimal,
+) {
+    init {
+        require(!end.isBefore(start)) { "Tariffkontekstens sluttdato er før startdato." }
+        require(tariffPackageId.isNotBlank())
+        require(rulesetVersion.isNotBlank())
+        require(tariffRateSetId.isNotBlank())
+        require(salaryTableId.isNotBlank())
+        require(annualSalary >= BigDecimal.ZERO)
+        require(hourlyRate >= BigDecimal.ZERO)
+    }
+
+    companion object {
+        fun fromRuntime(slice: TariffRuntimeProvenanceSlice): FinalizedTariffContextSnapshot =
+            FinalizedTariffContextSnapshot(
+                start = slice.start,
+                end = slice.end,
+                tariffPackageId = slice.tariffPackageId,
+                rulesetVersion = slice.rulesetVersion,
+                tariffRateSetId = slice.tariffRateSetId,
+                salaryTableId = slice.salaryTableId,
+                salaryTableEffectiveFrom = slice.salaryTableEffectiveFrom,
+                salaryTableSourceLabel = slice.salaryTableSourceLabel,
+                annualSalary = slice.annualSalary,
+                hourlyRate = slice.hourlyRate,
+            )
+    }
+}
+
+object FinalizedTariffContextSnapshots {
+    fun fromRuntime(calculation: TariffRuntimeCalculation): List<FinalizedTariffContextSnapshot> =
+        calculation.provenance.map { FinalizedTariffContextSnapshot.fromRuntime(it) }
+}
+
 data class FinalizedTripSnapshot(
     val id: String,
     val createdAt: LocalDateTime,
@@ -33,6 +77,7 @@ data class FinalizedTripSnapshot(
     val salaryTableId: String,
     val salaryTableEffectiveFrom: LocalDate,
     val salaryTableSourceLabel: String,
+    val tariffContexts: List<FinalizedTariffContextSnapshot>,
     val title: String,
     val tripStart: LocalDateTime,
     val tripEnd: LocalDateTime,
@@ -52,6 +97,45 @@ data class FinalizedTripSnapshot(
     val findings: List<ControlFinding>,
     val unresolvedRules: List<DomainRule>,
 ) {
+    init {
+        require(tariffContexts.isNotEmpty()) { "Ferdigstilt beregning må ha minst én tariffkontekst." }
+        require(tariffContexts.all { it.rulesetVersion == rulesetVersion }) {
+            "Alle tariffkontekster må bruke snapshotets frosne regelsett $rulesetVersion."
+        }
+        tariffContexts.zipWithNext().forEach { (previous, next) ->
+            require(next.start == previous.end.plusDays(1)) {
+                "Tariffkontekstene må være sammenhengende uten hull eller overlapp."
+            }
+        }
+        val occupied = requireNotNull(TariffEffectiveDateRange.forTrip(tripStart, tripEnd)) {
+            "Snapshotet har ugyldig turperiode."
+        }
+        require(tariffContexts.first().start == occupied.start && tariffContexts.last().end == occupied.end) {
+            "Tariffkontekstene må dekke hele den effektive turperioden."
+        }
+        val primary = tariffContexts.first()
+        require(primary.tariffPackageId == tariffPackageId) {
+            "Primær tariffpakke samsvarer ikke med første tariffkontekst."
+        }
+        require(primary.tariffRateSetId == tariffRateSetId) {
+            "Primært satssett samsvarer ikke med første tariffkontekst."
+        }
+        require(primary.salaryTableId == salaryTableId) {
+            "Primær lønnstabell samsvarer ikke med første tariffkontekst."
+        }
+        require(primary.salaryTableEffectiveFrom == salaryTableEffectiveFrom) {
+            "Primær lønnstabells virkningsdato samsvarer ikke med første tariffkontekst."
+        }
+        require(primary.salaryTableSourceLabel == salaryTableSourceLabel) {
+            "Primær lønnstabellkilde samsvarer ikke med første tariffkontekst."
+        }
+        require(primary.annualSalary.compareTo(annualSalary) == 0) {
+            "Primær årslønn samsvarer ikke med første tariffkontekst."
+        }
+    }
+
+    val hasMultipleTariffContexts: Boolean get() = tariffContexts.size > 1
+
     val ruleBasis: String get() = when (employerKind) {
         EmployerKind.OSLO_KOMMUNE -> {
             val tariffLabel = FerieturTariffs.packageForId(tariffPackageId)?.label ?: tariffPackageId
@@ -174,6 +258,20 @@ object FinalizedTripSnapshotBuilder {
             salaryTableId = salaryTableId,
             salaryTableEffectiveFrom = salaryTableEffectiveFrom,
             salaryTableSourceLabel = salaryTableSourceLabel,
+            tariffContexts = listOf(
+                FinalizedTariffContextSnapshot(
+                    start = requireNotNull(TariffEffectiveDateRange.forTrip(tripStart, tripEnd)).start,
+                    end = requireNotNull(TariffEffectiveDateRange.forTrip(tripStart, tripEnd)).end,
+                    tariffPackageId = tariffPackageId,
+                    rulesetVersion = rulesetVersion,
+                    tariffRateSetId = tariffRateSetId,
+                    salaryTableId = salaryTableId,
+                    salaryTableEffectiveFrom = salaryTableEffectiveFrom,
+                    salaryTableSourceLabel = salaryTableSourceLabel,
+                    annualSalary = annualSalary,
+                    hourlyRate = calculation.hourlyRate,
+                ),
+            ),
             title = title,
             tripStart = tripStart,
             tripEnd = tripEnd,

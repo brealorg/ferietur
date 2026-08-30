@@ -6,7 +6,9 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Base64
 import java.util.UUID
+import java.nio.ByteBuffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -25,6 +27,55 @@ class FinalizedTripSnapshotPersistenceTest {
         val decoded = FinalizedTripSnapshotCodec.decode(encoded)
 
         assertEquals(snapshot, decoded)
+    }
+
+    @Test
+    fun finalizedSnapshotVersionThreeRoundTripsMultipleTariffContexts() {
+        val original = snapshot(
+            id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            createdAt = LocalDateTime.of(2026, 8, 25, 12, 0, 0),
+        )
+        val first = original.tariffContexts.single().copy(
+            end = original.tripStart.toLocalDate(),
+        )
+        val second = first.copy(
+            start = original.tripStart.toLocalDate().plusDays(1),
+            end = original.tripEnd.toLocalDate(),
+            tariffRateSetId = "future-rate-set",
+            salaryTableId = "future-salary-table",
+            salaryTableEffectiveFrom = original.tripStart.toLocalDate().plusDays(1),
+            salaryTableSourceLabel = "Future verified salary table",
+            annualSalary = BigDecimal("620000"),
+            hourlyRate = BigDecimal("349.30"),
+        )
+        val snapshot = original.copy(tariffContexts = listOf(first, second))
+
+        val encoded = FinalizedTripSnapshotCodec.encode(snapshot)
+        val version = ByteBuffer.wrap(Base64.getDecoder().decode(encoded)).int
+        val decoded = FinalizedTripSnapshotCodec.decode(encoded)
+
+        assertEquals(3, version)
+        assertEquals(snapshot, decoded)
+        assertTrue(decoded.hasMultipleTariffContexts)
+        assertEquals(listOf("oslo-salary-2026-05-01", "future-salary-table"), decoded.tariffContexts.map { it.salaryTableId })
+    }
+
+    @Test
+    fun legacyVersionTwoSnapshotSynthesizesOneFrozenTariffContext() {
+        val encoded =
+            "AAAAAgAAACQ0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQAAAATMjAyNi0wOC0yNVQxMToxNTozMAAAAAUwLjUuNQAAADQAAAAGMjAyNi4zAAAAFG9zbG8tZG9rMjUtMjAyNi0yMDI4AAAAIW9zbG8tZG9rMjUtMjAyNi0yMDI4LXJhdGVzLTIwMjYuMQAAABZvc2xvLXNhbGFyeS0yMDI2LTA1LTAxAAAACjIwMjYtMDUtMDEAAAAoTMO4bm5zdGFiZWxsIE9zbG8ga29tbXVuZSBmcmEgMDEuMDUuMjAyNgAAAAlMZWdhY3kgdjEAAAAQMjAyNi0wOC0yNVQwNzowMAAAABAyMDI2LTA4LTI2VDIwOjAwAAAADE9TTE9fS09NTVVORQAAAAtVTlNQRUNJRklFRAAAABhET19OT1RfVVNFX05PUk1BTF9ST1NURVIAAAAgAAAABjYxNDYwMAAAAApIT1VSU18zNV81AAAACFNUQU5EQVJEAQAAAAAAAAAAAAAAAAYzMzIuOTQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAABDAuMDAAAAAEMC4wMAAAAAQwLjAwAAAABDAuMDAAAAAAAAAABDAuMDAAAAAEMC4wMAEAAAAAAAAAAAAAAAA="
+
+        val decoded = FinalizedTripSnapshotCodec.decode(encoded)
+
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, decoded.tariffPackageId)
+        assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, decoded.tariffRateSetId)
+        assertEquals(1, decoded.tariffContexts.size)
+        val context = decoded.tariffContexts.single()
+        assertEquals(LocalDate.of(2026, 8, 25), context.start)
+        assertEquals(LocalDate.of(2026, 8, 26), context.end)
+        assertEquals(decoded.salaryTableId, context.salaryTableId)
+        assertEquals(decoded.annualSalary, context.annualSalary)
+        assertEquals(decoded.calculation.hourlyRate, context.hourlyRate)
     }
 
     @Test
@@ -88,6 +139,12 @@ class FinalizedTripSnapshotPersistenceTest {
         assertEquals("oslo-salary-2026-05-01", snapshot.salaryTableId)
         assertEquals(LocalDate.of(2026, 5, 1), snapshot.salaryTableEffectiveFrom)
         assertEquals("Oslo kommune lønnstabell fra 01.05.2026", snapshot.salaryTableSourceLabel)
+        assertEquals(1, snapshot.tariffContexts.size)
+        assertEquals(snapshot.tariffPackageId, snapshot.tariffContexts.single().tariffPackageId)
+        assertEquals(snapshot.tariffRateSetId, snapshot.tariffContexts.single().tariffRateSetId)
+        assertEquals(snapshot.salaryTableId, snapshot.tariffContexts.single().salaryTableId)
+        assertEquals(snapshot.annualSalary, snapshot.tariffContexts.single().annualSalary)
+        assertEquals(snapshot.calculation.hourlyRate, snapshot.tariffContexts.single().hourlyRate)
     }
 
     @Test
@@ -101,6 +158,9 @@ class FinalizedTripSnapshotPersistenceTest {
         assertEquals("oslo-salary-2026-05-01", decoded.salaryTableId)
         assertEquals(FerieturTariffs.DOK25_2026_2028_ID, decoded.tariffPackageId)
         assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, decoded.tariffRateSetId)
+        assertEquals(1, decoded.tariffContexts.size)
+        assertEquals(decoded.tariffPackageId, decoded.tariffContexts.single().tariffPackageId)
+        assertEquals(decoded.salaryTableId, decoded.tariffContexts.single().salaryTableId)
     }
 
     private fun snapshot(

@@ -144,7 +144,7 @@ req('val finalizedSnapshot: FinalizedTripSnapshot? = null' in draft, 'persisted_
 req('val finalizationHistory: List<FinalizedTripSnapshot>' in draft, 'finalization_history_field_missing')
 req('val migrationHistory: Set<String>' in draft, 'migration_provenance_field_missing')
 req('FinalizedTripSnapshotCodec.encode' in draft and 'FinalizedTripSnapshotCodec.decode' in draft, 'snapshot_codec_not_wired_to_draft')
-req('LEGACY_FORMAT_VERSION = 1' in snapshot_codec and 'FORMAT_VERSION = 2' in snapshot_codec, 'snapshot_codec_version_migration_missing')
+req('LEGACY_FORMAT_VERSION = 1' in snapshot_codec and 'SINGLE_CONTEXT_FORMAT_VERSION = 2' in snapshot_codec and 'FORMAT_VERSION = 3' in snapshot_codec, 'snapshot_codec_version_migration_missing')
 req('writeCalculation' in snapshot_codec and 'readCalculation' in snapshot_codec, 'calculation_not_persisted_in_snapshot_codec')
 req('UUID.fromString(snapshotId)' in finalized, 'snapshot_uuid_validation_missing')
 req('UUID.randomUUID().toString()' in finalized, 'snapshot_uuid_default_missing')
@@ -246,6 +246,16 @@ req('WORK_BLOCK_OVERLAP' in tariff_runtime and 'WORK_BLOCK_OUTSIDE_TRIP' in tari
 req('MONETARY_COORDINATION_FAILED' in tariff_runtime and 'segmentationReason' in tariff_runtime and 'monetaryReason' in tariff_runtime, 'runtime_typed_failure_mapping_missing')
 req('app/src/main/java/app/ferietur/ui/FerieturApp.kt' not in tariff_runtime, 'ui_dependency_leaked_into_runtime_domain_gateway')
 print('CURRENT_TARIFF_RUNTIME_CALCULATION_CONTRACT=PASS')
+# A4A7 multi-context finalized snapshot provenance contract.
+req('data class FinalizedTariffContextSnapshot' in finalized, 'finalized_tariff_context_snapshot_missing')
+req('val tariffContexts: List<FinalizedTariffContextSnapshot>' in finalized, 'snapshot_multi_context_provenance_field_missing')
+req('FinalizedTariffContextSnapshot.fromRuntime' in finalized, 'runtime_to_snapshot_provenance_bridge_missing')
+req('writeList(snapshot.tariffContexts) { writeTariffContext(it) }' in snapshot_codec, 'snapshot_v3_tariff_contexts_not_written')
+req('readList { readTariffContext() }' in snapshot_codec, 'snapshot_v3_tariff_contexts_not_read')
+req('legacySingleContext(' in snapshot_codec, 'legacy_v1_v2_context_synthesis_missing')
+req('version == SINGLE_CONTEXT_FORMAT_VERSION' in snapshot_codec, 'snapshot_v2_read_compat_missing')
+req('version == LEGACY_FORMAT_VERSION' in snapshot_codec, 'snapshot_v1_read_compat_missing')
+print('CURRENT_MULTI_CONTEXT_SNAPSHOT_PROVENANCE_CONTRACT=PASS')
 
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')
