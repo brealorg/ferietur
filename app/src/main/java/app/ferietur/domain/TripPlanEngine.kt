@@ -231,9 +231,46 @@ object TripPlanEngine {
         tripEnd: LocalDateTime,
         rateSet: TariffRateSet = FerieturTariffRates.current,
     ): PreliminaryCalculation {
+        val blocks = projectRange(dates, plans)
+        return calculatePreliminaryFromProjectedBlocks(
+            fundingMode = fundingMode,
+            dates = dates,
+            roster = roster,
+            blocks = blocks,
+            annualSalary = annualSalary,
+            weeklyBasis = weeklyBasis,
+            weekendProfile = weekendProfile,
+            tripStart = tripStart,
+            tripEnd = tripEnd,
+            rateSet = rateSet,
+        )
+    }
+
+    /**
+     * Calculation core for already projected [WorkBlock]s.
+     *
+     * This is intentionally the same whole-trip calculation semantics as
+     * [calculatePreliminary]. It exists so tariff-effective-date slices can be
+     * prepared without converting clipped blocks back to [PlannedBlock]. It is
+     * not, by itself, permission to sum independent slice calculations: stay
+     * allowance, short-notice travel caps, and active-event rounding still have
+     * whole-trip/per-watch scope and must be coordinated by the segmented
+     * orchestration layer.
+     */
+    fun calculatePreliminaryFromProjectedBlocks(
+        fundingMode: FundingMode,
+        dates: List<LocalDate>,
+        roster: Map<LocalDate, String>,
+        blocks: List<WorkBlock>,
+        annualSalary: BigDecimal,
+        weeklyBasis: WeeklyBasis,
+        weekendProfile: WeekendProfile,
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+        rateSet: TariffRateSet = FerieturTariffRates.current,
+    ): PreliminaryCalculation {
         val tariffLabel = FerieturTariffs.requireById(rateSet.tariffPackageId).label
         val hourlyRate = TariffMath.hourlyRate(annualSalary, weeklyBasis, rateSet)
-        val blocks = projectRange(dates, plans)
         val activeBlocks = normalizedActiveBlocks(blocks)
         val restingBlocks = blocks.filter { it.kind == TimeKind.RESTING_NIGHT_WATCH }
         val activeEventBlocks = blocks.filter { it.kind == TimeKind.ACTIVE_EVENT_ON_RESTING }

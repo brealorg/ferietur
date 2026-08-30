@@ -116,8 +116,20 @@ class OsloSalaryTablesTest {
 
         assertEquals("salary-a", catalog.descriptorForDate(firstDescriptor.verifiedThrough)?.id)
         assertEquals("salary-b", catalog.descriptorForDate(secondDescriptor.effectiveFrom)?.id)
+        assertEquals("700000", catalog.annualSalaryForDate(1, firstDescriptor.verifiedThrough)?.toPlainString())
+        assertEquals("710000", catalog.annualSalaryForDate(1, secondDescriptor.effectiveFrom)?.toPlainString())
         assertEquals("710000", catalog.annualSalaryForRange(1, secondDescriptor.effectiveFrom, secondDescriptor.effectiveFrom)?.toPlainString())
         assertNull(catalog.descriptorForRange(firstDescriptor.verifiedThrough, secondDescriptor.effectiveFrom))
+    }
+
+
+    @Test
+    fun currentSalaryCanBeResolvedByFrozenTableId() {
+        assertEquals(
+            OsloSalaryTable2026.annualSalary(32),
+            OsloSalaryTables.annualSalaryForTable(32, OsloSalaryTable2026.tableId),
+        )
+        assertNull(OsloSalaryTables.annualSalaryForTable(32, "unknown-table"))
     }
 
 }

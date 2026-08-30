@@ -211,3 +211,187 @@ A3 beregner ikke én tur med to forskjellige lønnstabeller eller satssett. Nest
 arkitekturslice kan implementere eksplisitt segmentering dersom dette er ønsket.
 Historiske snapshots trenger ingen migrering: de beholder allerede fryst
 `tariffRateSetId`, lønnstabell-ID og beregningsresultat.
+
+
+## A4A1: hybrid segmenteringsplan uten beregningsaktivering
+
+A4A1 etablerer beslutningsmotoren for turer som senere skal kunne krysse en
+effektivdato uten å gjette. Den eksisterende produksjonsberegningen er fortsatt
+strengt én tariffkontekst per tur; ingen synlig beregningsatferd endres i denne
+slicen.
+
+`TariffSegmentPlanner` bygger maksimale, sammenhengende segmenter der samme
+tariffpakke, satssett og lønnstabell gjelder. En ren numerisk endring kan derfor
+planlegges som flere segmenter så lenge alle segmentene bruker samme
+`rulesetVersion`. Uavhengige grenser i satssett og lønnstabell kan ligge på
+forskjellige datoer.
+
+Dersom `rulesetVersion` skifter under turen, returneres
+`SEMANTIC_RULESET_CHANGE` i stedet for en automatisk split. Dette er den
+fail-closed skillet mellom:
+
+- sats-/lønnstabellendring: kan segmenteres automatisk, og
+- semantisk regelendring: må implementeres og valideres eksplisitt.
+
+Manglende kildekning og inkonsistent binding mellom tariffpakke, satssett og
+lønnstabell gir egne typede feil. `SalaryTableCatalog` kan nå også slå opp
+årslønn for én konkret dato; dette er nødvendig når neste slice skal beregne
+hvert segment med riktig lønnstabell.
+
+### Ikke aktivert ennå
+
+A4A1 endrer ikke `FinalizedTripSnapshot`, codec, PDF, UI eller
+`TripPlanEngine.calculatePreliminary`. `FerieturTariffResolver.resolveRange`
+beholder den gamle single-context-porten, mens `planSegments` er den nye
+forberedende API-en. Neste slice kan dermed implementere selve
+segmentberegningen uten å blande planleggingslogikk og beregningsrefaktor i ett
+stort risikosteg.
+
+## A4A2: tariffaktive tidsvinduer og klippede beregningsslicer
+
+A4A2 aktiverer fortsatt ikke fler-satsberegning i produksjonen. Den gjør i
+stedet neste nødvendige sikkerhetssteg: én planlagt effektivdatogrense kan nå
+oversettes til eksakte, sammenhengende tidsvinduer med korrekt lønnstabell,
+satssett, årslønn og timelønn for hvert vindu.
+
+### Slutttid behandles som eksklusiv ved midnatt
+
+Tariffsegmentering skal følge faktisk tid, ikke bare skjemaets inkluderende
+sluttdato. `TariffEffectiveDateRange` behandler derfor turintervallet som
+`[start, slutt)`. En tur som slutter nøyaktig 1. mai kl. 00:00 bruker ikke
+1. mai-satsen bare fordi sluttdatoen heter 1. mai. Går turen til 00:01, er den
+nye datoen derimot faktisk tatt i bruk og må ha gyldig tariff-/lønnskilde.
+
+Dette låses med eksplisitte tester rundt 00:00/00:01.
+
+### Arbeidsblokker klippes uten å miste proveniens
+
+`TariffCalculationSliceBuilder` tar ferdig projiserte `WorkBlock`-intervaller
+og klipper dem ved segmentgrensene. En nattevakt 23:00–07:00 over en
+midnattsgrense blir dermed 23:00–00:00 og 00:00–07:00, men begge delene beholder:
+
+- opprinnelig `sourceIndex`
+- `TimeKind`
+- reisevarselstatus
+- eksakte tidsgrenser
+
+Motoren konverterer ikke de klippede intervallene tilbake til `PlannedBlock`.
+Det er bevisst, fordi en slik rundtur kunne mistet eierskap for aktive hendelser
+under hvilende natt eller andre perioder som opprinnelig krysser midnatt.
+
+Arbeidsperioder som allerede ligger utenfor selve turen avvises i stedet for å
+bli stilltiende trimmet bort. Den eksisterende valideringen skal fortsatt gjøre
+slike feil synlige for brukeren.
+
+### Lønn og timelønn fryses per segment
+
+Hver slice slår opp årslønn via den konkrete `salaryTable.id` som
+segmentplanleggeren valgte, og beregner timelønn med akkurat segmentets
+`TariffRateSet`. Dette betyr at en fremtidig lønnstabell og en separat
+satsendring kan ligge på ulike datoer uten at startdatoens tall lekker over
+hele reisen.
+
+### Fortsatt ikke summert som ferdig lønnsberegning
+
+A4A2 bygger sikre input-slicer, men kaller ikke dagens
+`TripPlanEngine.calculatePreliminary` én gang per slice. Det ville vært feil for
+regler som gjelder turen eller vakten samlet, blant annet:
+
+- døgngodtgjøring for hele ferieoppholdets varighet
+- to-timersgrensen for kortvarslet reise, som gjelder reisen samlet
+- avrunding av aktivt arbeid per hvilende nattevakt dersom selve vakten krysser
+  en effektivdatogrense
+
+Neste slice skal derfor først trekke beregningskjernen ned på projiserte
+`WorkBlock`-inputs og eksplisitt skille segmentlokale beløpsposter fra slike
+globale/per-vakt-regler. Først deretter kan segmentresultater summeres uten
+å doble rettigheter eller avrunding.
+
+## A4A3: beregningskjerne for ferdig projiserte arbeidsintervaller
+
+A4A3 er en ren strukturell refaktor. Den eksisterende
+`TripPlanEngine.calculatePreliminary` projiserer fortsatt `PlannedBlock` til
+`WorkBlock` på samme måte som før, men delegerer deretter til
+`calculatePreliminaryFromProjectedBlocks`.
+
+Den nye inngangen tar ferdig projiserte `WorkBlock`-intervaller direkte. Dette
+er nødvendig for split-rate-arbeidet fordi A4A2 allerede har klippet
+kryss-midnatt-intervaller ved effektivdatogrensen og bevart deres tidsart,
+reisevarselstatus og kildeproveniens. De intervallene skal ikke konverteres
+frem og tilbake via `PlannedBlock`, siden det kan endre eierskap eller dato for
+aktive hendelser under hvilende nattevakt.
+
+### Paritet er kontrakten
+
+A4A3 endrer ikke beregningsregler. En representativ tur kjøres både gjennom den
+opprinnelige planbaserte inngangen og den nye projiserte inngangen og skal gi
+identisk `PreliminaryCalculation`. Egne tester låser også at:
+
+- en aktiv hendelse kl. 02:00 under en kryss-midnatt hvilende vakt beholder sitt
+  eksakte `LocalDateTime` og avrundes som før;
+- et eksplisitt injisert satssett brukes i den projiserte kjernen;
+- døgngodtgjøring fortsatt bruker den oppgitte hele turperioden og ikke
+  automatisk blir gjort segmentlokal.
+
+Det siste er bevisst. `calculatePreliminaryFromProjectedBlocks` er fremdeles en
+**whole-trip-kjerne**. Den skal derfor ikke kalles én gang per tariffslice og
+summeres ukritisk. Døgngodtgjøring, den felles kortvarselsgrensen og avrunding
+av aktive hendelser per hvilende vakt må først løftes til eksplisitt koordinert
+scope før produksjonsmessig fler-satsberegning kan aktiveres.
+
+### Neste slice
+
+A4A4 skal splitte beregningsansvaret i segmentlokale poster og koordinerte
+whole-trip/per-vakt-poster. Først da kan A4A2-slicene beregnes med forskjellige
+satssett/lønnstabeller og slås sammen uten dobbel godtgjøring eller dobbel
+avrunding.
+
+## A4A4: eksplisitt scope for hel-tur- og per-vakt-regler
+
+A4A4 aktiverer fortsatt ikke summert fler-satsberegning. Den gjør i stedet
+scope-eierskapet eksplisitt slik at neste monetære koordinator ikke kan behandle
+alle beregningslinjer som om de var segmentlokale.
+
+`TariffCalculationLineScopes` klassifiserer hver eksisterende beregningslinje som:
+
+- `SEGMENT_LOCAL`: kan senere beregnes med slicens egen lønn og sats;
+- `WHOLE_TRIP`: må koordineres én gang for hele reisen;
+- `PER_RESTING_WATCH`: må koordineres én gang per hvilende nattevakt.
+
+Kildekontrakten sammenligner de faktiske linje-ID-ene i beregningskjernen med
+scope-katalogen. En ny beregningslinje kan dermed ikke introduseres uten at dens
+scope samtidig klassifiseres.
+
+### Døgngodtgjøring og kortvarselsgrense må være invariant
+
+Døgngodtgjøringen beregnes for ferieoppholdet samlet. Dersom satsen per døgn
+eller seks-timersgrensen endres midt i turen, stopper A4A4 fail-closed. Ferietur
+har da ingen dokumentert regel for hvordan et helt døgn som krysser
+virkningsdatoen skal prises.
+
+Tilsvarende gjelder kortvarslet reise. To-timersgrensen og
+avrundingssteget er scope for reisen samlet og må være de samme på alle slicer.
+Selve overtidsprosenten kan senere prises lokalt etter at den globale tidsmengden
+er fordelt kronologisk.
+
+### Aktivt arbeid under hvilende natt
+
+A4A4 rekonstruerer opprinnelige arbeidsintervaller fra A4A2s klippede
+`sourceIndex`-fragmenter. En hvilende nattevakt kan krysse en effektivdatogrense
+uten å være et problem i seg selv.
+
+Dersom aktive hendelser under den samme vakten berører to forskjellige
+pris-/avrundingskontekster, stopper motoren derimot med
+`ACTIVE_EVENT_RATE_ALLOCATION_REQUIRED`. Punkt 20.4 krever avrunding per vakt;
+appen skal ikke finne på hvordan den avrundede betalte tiden fordeles mellom to
+ulike timelønner eller multiplikatorer.
+
+Hvis hendelsene bare ligger i én kontekst, eller to slicer faktisk har identisk
+timelønn, multiplikator og avrundingsregel, er scope-et entydig og kan gå videre.
+
+### Fortsatt ikke produksjonsaktivert
+
+A4A4 beregner ingen nye beløp, endrer ingen snapshot og brukes ikke av UI/PDF.
+Neste slice kan bruke scope-planen til å koordinere hel-tur-reglene og deretter
+slå sammen segmentlokale beløp uten dobbel døgngodtgjøring, dobbel
+kortvarselsgrense eller dobbel avrunding per hvilende vakt.

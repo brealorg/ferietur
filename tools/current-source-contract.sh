@@ -20,6 +20,10 @@ for f in \
     app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
     app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
     app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+    app/src/main/java/app/ferietur/domain/TariffSegmentation.kt \
+    app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt \
+    app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt \
+    app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
     app/src/main/java/app/ferietur/domain/SavedTripDraft.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt \
@@ -46,6 +50,10 @@ engine = (root/'app/src/main/java/app/ferietur/domain/TripPlanEngine.kt').read_t
 tariff_catalog = (root/'app/src/main/java/app/ferietur/domain/TariffCatalog.kt').read_text(encoding='utf-8')
 tariff_rates = (root/'app/src/main/java/app/ferietur/domain/TariffRateSet.kt').read_text(encoding='utf-8')
 tariff_resolution = (root/'app/src/main/java/app/ferietur/domain/TariffResolution.kt').read_text(encoding='utf-8')
+tariff_segmentation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentation.kt').read_text(encoding='utf-8')
+tariff_segment_calculation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt').read_text(encoding='utf-8')
+tariff_whole_trip_scope = (root/'app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt').read_text(encoding='utf-8')
+salary_tables = (root/'app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt').read_text(encoding='utf-8')
 draft = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraft.kt').read_text(encoding='utf-8')
 finalized = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt').read_text(encoding='utf-8')
 snapshot_codec = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt').read_text(encoding='utf-8')
@@ -150,6 +158,9 @@ req('rateSetId:' not in tariff_catalog, 'tariff_package_still_owns_single_rate_s
 req('class TariffRateSetCatalog' in tariff_rates and 'fun requireForRange' in tariff_rates, 'effective_dated_rate_catalog_missing')
 req('effectiveFrom: LocalDate' in tariff_rates and 'effectiveTo: LocalDate' in tariff_rates, 'rate_set_effective_dates_missing')
 req('object FerieturTariffResolver' in tariff_resolution and 'ResolvedTariffContext' in tariff_resolution, 'coherent_tariff_resolver_missing')
+req('class TariffSegmentPlanner' in tariff_segmentation, 'tariff_segment_planner_missing')
+req('SEMANTIC_RULESET_CHANGE' in tariff_segmentation, 'semantic_ruleset_split_gate_missing')
+req('fun planSegments' in tariff_resolution and 'TariffSegmentationResult' in tariff_resolution, 'segmented_tariff_resolver_API_missing')
 req('FerieturTariffs.DOK25_2026_2028_RULESET_VERSION' in snapshot_codec, 'legacy_v1_tariff_inference_not_version_pinned')
 req('FerieturTariffRates.requireById(snapshot.tariffRateSetId)' in pdf_exporter, 'PDF_not_bound_to_frozen_rate_set')
 req('${s.tariffPackageId}' in pdf_exporter and '${s.tariffRateSetId}' in pdf_exporter, 'PDF_tariff_provenance_not_rendered')
@@ -176,6 +187,36 @@ print('FIX03_CA002_PERSISTED_FINALIZATION_CONTRACT=PASS')
 print('FIX03_CA005_VERSIONED_MIGRATION_CONTRACT=PASS')
 print('FIX03_CA008_UUID_EXPORT_IDENTITY_CONTRACT=PASS')
 print('FIX03_CA009_FROZEN_BUILD_RULESET_RATE_METADATA_CONTRACT=PASS')
+print('CURRENT_TARIFF_SEGMENTATION_CONTRACT=PASS')
+req('data class TariffEffectiveDateRange' in tariff_segmentation, 'effective_trip_date_range_missing')
+req('tripEnd.toLocalTime() == LocalTime.MIDNIGHT' in tariff_segmentation, 'midnight_end_exclusive_policy_missing')
+req('data class TariffCalculationSlice' in tariff_segment_calculation, 'tariff_calculation_slice_missing')
+req('data class SegmentedWorkBlock' in tariff_segment_calculation and 'sourceIndex' in tariff_segment_calculation, 'segment_block_provenance_missing')
+req('class TariffCalculationSliceBuilder' in tariff_segment_calculation, 'segment_slice_builder_missing')
+req('WORK_BLOCK_OUTSIDE_TRIP' in tariff_segment_calculation, 'silent_outside_trip_clipping_guard_missing')
+req('TariffMath.hourlyRate(annualSalary, weeklyBasis, segment.rateSet)' in tariff_segment_calculation, 'per_segment_hourly_rate_resolution_missing')
+req('annualSalaryForTable' in salary_tables, 'frozen_salary_table_lookup_missing')
+req('fun planSegments(tripStart: LocalDateTime, tripEnd: LocalDateTime)' in tariff_resolution, 'datetime_segment_planner_missing')
+print('CURRENT_TARIFF_SEGMENT_INPUT_CONTRACT=PASS')
+projected_core_start = engine.find('fun calculatePreliminaryFromProjectedBlocks(')
+projected_core_end = engine.find('\n    fun rosterUncoveredEvidence(', projected_core_start)
+req(projected_core_start >= 0 and projected_core_end > projected_core_start, 'projected_block_calculation_core_missing')
+projected_core = engine[projected_core_start:projected_core_end]
+req('blocks: List<WorkBlock>' in projected_core, 'projected_block_input_missing')
+req('projectRange(' not in projected_core, 'projected_core_reprojects_blocks')
+req('return calculatePreliminaryFromProjectedBlocks(' in engine, 'planned_entrypoint_not_delegating_to_projected_core')
+req('val blocks = projectRange(dates, plans)' in engine, 'planned_entrypoint_projection_missing')
+print('CURRENT_PROJECTED_BLOCK_CALCULATION_CORE_CONTRACT=PASS')
+# A4A4 calculation-scope ownership contract.
+req('object TariffCalculationLineScopes' in tariff_whole_trip_scope, 'calculation_line_scope_catalog_missing')
+req('object TariffWholeTripScopeCoordinator' in tariff_whole_trip_scope, 'whole_trip_scope_coordinator_missing')
+req('INCONSISTENT_STAY_ALLOWANCE_POLICY' in tariff_whole_trip_scope, 'stay_allowance_transition_gate_missing')
+req('INCONSISTENT_SHORT_NOTICE_POLICY' in tariff_whole_trip_scope, 'short_notice_transition_gate_missing')
+req('ACTIVE_EVENT_RATE_ALLOCATION_REQUIRED' in tariff_whole_trip_scope, 'active_event_cross_rate_gate_missing')
+engine_line_ids = set(re.findall(r'id\s*=\s*"([^"]+)"', projected_core))
+scope_line_ids = set(re.findall(r'"([^"]+)"\s+to\s+TariffCalculationLineScope\.', tariff_whole_trip_scope))
+req(engine_line_ids == scope_line_ids, 'calculation_line_scope_catalog_not_exhaustive')
+print('CURRENT_TARIFF_WHOLE_TRIP_SCOPE_CONTRACT=PASS')
 
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')

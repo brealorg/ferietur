@@ -66,6 +66,14 @@ class SalaryTableCatalog(periods: List<SalaryTablePeriod>) {
     fun supportsRange(start: LocalDate, end: LocalDate): Boolean =
         descriptorForRange(start, end) != null
 
+    fun annualSalaryForDate(step: Int, date: LocalDate): BigDecimal? {
+        val period = periodForDate(date) ?: return null
+        return period.annualSalary(step)
+    }
+
+    fun annualSalaryForTable(step: Int, tableId: String): BigDecimal? =
+        byId[tableId]?.annualSalary?.invoke(step)
+
     fun annualSalaryForRange(
         step: Int,
         start: LocalDate,
@@ -115,6 +123,12 @@ object OsloSalaryTables {
 
     fun supportsRange(start: LocalDate, end: LocalDate): Boolean =
         catalog.supportsRange(start, end)
+
+    fun annualSalaryForDate(step: Int, date: LocalDate): BigDecimal? =
+        catalog.annualSalaryForDate(step, date)
+
+    fun annualSalaryForTable(step: Int, tableId: String): BigDecimal? =
+        catalog.annualSalaryForTable(step, tableId)
 
     fun annualSalaryForRange(
         step: Int,
