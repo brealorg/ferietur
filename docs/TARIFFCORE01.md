@@ -452,3 +452,31 @@ PDF og UI endres ikke i denne slicen. Neste steg kan først kvalifisere A4A5 og
 deretter koble resolver → slice builder → monetær koordinator inn i en eksplisitt
 runtime-orchestrator med bakoverkompatibel snapshot-proveniens for flere
 kontekster.
+
+## A4A6 — runtime calculation orchestrator
+
+A4A6 introduces a runtime-ready domain gateway without wiring it into Compose,
+PDF export, or finalized snapshots yet.
+
+`FerieturTariffRuntimeCalculator.calculate(...)` now owns the complete branch:
+
+1. validate the trip interval, chapter-20 scope, date coverage, outside-trip
+   blocks, and unintended overlap;
+2. resolve effective dates with the half-open `[tripStart, tripEnd)` policy;
+3. build frozen calculation slices with the exact salary table and rate set;
+4. preserve the existing `PreliminaryCalculation` path byte-for-behavior for a
+   single tariff context;
+5. delegate real cross-context money to the qualified A4A5 coordinator;
+6. return typed failures instead of falling back to a guessed tariff context.
+
+The runtime result deliberately does not flatten a multi-context trip into
+`PreliminaryCalculation`. That legacy type contains one hourly rate and one
+implicit tariff context. A4A6 instead exposes common money/line properties plus
+an ordered `TariffRuntimeProvenanceSlice` list containing the exact tariff
+package, ruleset, rate set, salary table, annual salary, and hourly rate used in
+each effective-date segment.
+
+This provenance list is the input contract for the next persistence slice. Until
+snapshot schema v3 (or an equivalent backward-compatible representation) exists,
+the Compose flow remains on the current single-context path and cannot silently
+finalize a multi-context result with only one provenance identity.
