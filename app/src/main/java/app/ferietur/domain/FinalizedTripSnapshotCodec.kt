@@ -11,7 +11,10 @@ import java.time.LocalDateTime
 import java.util.Base64
 
 object FinalizedTripSnapshotCodec {
-    private const val FORMAT_VERSION = 1
+    private const val LEGACY_FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
+    private const val LEGACY_UNKNOWN_TARIFF_PACKAGE_ID = "legacy-v1-unknown-tariff-package"
+    private const val LEGACY_UNKNOWN_RATE_SET_ID = "legacy-v1-unknown-rate-set"
 
     fun encode(snapshot: FinalizedTripSnapshot): String {
         val bytes = ByteArrayOutputStream()
@@ -26,10 +29,10 @@ object FinalizedTripSnapshotCodec {
         val bytes = Base64.getDecoder().decode(encoded)
         return DataInputStream(ByteArrayInputStream(bytes)).use { input ->
             val version = input.readInt()
-            require(version == FORMAT_VERSION) {
+            require(version == LEGACY_FORMAT_VERSION || version == FORMAT_VERSION) {
                 "Unsupported finalized snapshot format: $version"
             }
-            input.readSnapshot()
+            input.readSnapshot(version)
         }
     }
 
@@ -39,6 +42,8 @@ object FinalizedTripSnapshotCodec {
         writeString(snapshot.appVersionName)
         writeInt(snapshot.appVersionCode)
         writeString(snapshot.rulesetVersion)
+        writeString(snapshot.tariffPackageId)
+        writeString(snapshot.tariffRateSetId)
         writeString(snapshot.salaryTableId)
         writeDate(snapshot.salaryTableEffectiveFrom)
         writeString(snapshot.salaryTableSourceLabel)
@@ -62,14 +67,26 @@ object FinalizedTripSnapshotCodec {
         writeList(snapshot.unresolvedRules) { writeRule(it) }
     }
 
-    private fun DataInputStream.readSnapshot(): FinalizedTripSnapshot =
-        FinalizedTripSnapshot(
-            id = readString(),
-            createdAt = readDateTime(),
-            appVersionName = readString(),
-            appVersionCode = readInt(),
-            rulesetVersion = readString(),
-            salaryTableId = readString(),
+    private fun DataInputStream.readSnapshot(formatVersion: Int): FinalizedTripSnapshot {
+        val id = readString()
+        val createdAt = readDateTime()
+        val appVersionName = readString()
+        val appVersionCode = readInt()
+        val rulesetVersion = readString()
+        val storedTariffPackageId = if (formatVersion >= FORMAT_VERSION) readString() else null
+        val storedTariffRateSetId = if (formatVersion >= FORMAT_VERSION) readString() else null
+        val salaryTableId = readString()
+        val legacyProvenance = legacyTariffProvenance(rulesetVersion, salaryTableId)
+
+        return FinalizedTripSnapshot(
+            id = id,
+            createdAt = createdAt,
+            appVersionName = appVersionName,
+            appVersionCode = appVersionCode,
+            rulesetVersion = rulesetVersion,
+            tariffPackageId = storedTariffPackageId ?: legacyProvenance.first,
+            tariffRateSetId = storedTariffRateSetId ?: legacyProvenance.second,
+            salaryTableId = salaryTableId,
             salaryTableEffectiveFrom = readDate(),
             salaryTableSourceLabel = readString(),
             title = readString(),
@@ -91,6 +108,17 @@ object FinalizedTripSnapshotCodec {
             findings = readList { readFinding() },
             unresolvedRules = readList { readRule() },
         )
+    }
+
+    private fun legacyTariffProvenance(rulesetVersion: String, salaryTableId: String): Pair<String, String> =
+        if (
+            rulesetVersion == FerieturTariffs.DOK25_2026_2028_RULESET_VERSION &&
+            salaryTableId == OsloSalaryTable2026.tableId
+        ) {
+            FerieturTariffs.DOK25_2026_2028_ID to FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID
+        } else {
+            LEGACY_UNKNOWN_TARIFF_PACKAGE_ID to LEGACY_UNKNOWN_RATE_SET_ID
+        }
 
     private fun DataOutputStream.writeRosterRow(row: RosterSnapshotRow) {
         writeDate(row.date)

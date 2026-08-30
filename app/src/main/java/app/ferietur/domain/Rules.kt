@@ -27,6 +27,7 @@ object FerieturRules {
         DomainRule("D25_12_2_2", "Lørdags- og søndagstillegg", "Dok. 25 2026–28, punkt 12.2.2", RuleStatus.IMPLEMENTED),
         DomainRule("D25_12_2_3", "Helge- og høytidsdagstillegg", "Dok. 25 2026–28, punkt 12.2.3", RuleStatus.IMPLEMENTED),
         DomainRule("D25_20_6", "Døgngodtgjøring ved ferieopphold", "Dok. 25 2026–28, punkt 20.6", RuleStatus.IMPLEMENTED),
+        DomainRule("D25_20_6_EXACT_THRESHOLD", "Nøyaktig seks timers resttid ved døgngodtgjøring", "Dok. 25 2026–28, punkt 20.6", RuleStatus.UNRESOLVED),
         DomainRule("D25_20_4_ACTIVE", "Aktivt arbeid under hvilende nattevakt", "Dok. 25 2026–28, punkt 20.4", RuleStatus.IMPLEMENTED),
         DomainRule("D25_8_9_X20", "Kveld/natt og helgetillegg under hvilende nattevakt", "Dok. 25 2026–28, punkt 8.9, 12.1.1, 12.2.2 og 20.4", RuleStatus.IMPLEMENTED),
         DomainRule("D25_20_2_X12_13", "Kapittel 12-tillegg stables ikke på de samme timene som kompenseres etter punkt 20.2", "Dok. 25 2026–28, punkt 12.1.1, 12.2.2 og 20.2", RuleStatus.IMPLEMENTED),

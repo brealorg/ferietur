@@ -13,6 +13,8 @@ import app.ferietur.domain.ControlFinding
 import app.ferietur.domain.DomainRule
 import app.ferietur.domain.EmployerKind
 import app.ferietur.domain.FinalizedTripSnapshot
+import app.ferietur.domain.FerieturTariffRates
+import app.ferietur.domain.TariffRateSet
 import app.ferietur.domain.FindingSeverity
 import app.ferietur.domain.PayingParty
 import app.ferietur.domain.PaymentTreatment
@@ -44,17 +46,18 @@ object PdfExporter {
         val file = File(dir, "ferietur-${snapshot.tripStart.toLocalDate()}-${snapshot.id}-$suffix.pdf")
         val document = PdfDocument()
         val writer = PdfWriter(document)
+        val rateSet = FerieturTariffRates.requireById(snapshot.tariffRateSetId)
 
         if (variant == Variant.SHORT) {
-            writeExecutiveSummary(writer, snapshot, includeFooter = true)
+            writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = true)
         } else {
-            writeExecutiveSummary(writer, snapshot, includeFooter = false)
+            writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = false)
             writer.pageBreak()
             writeRosterAndPlan(writer, snapshot)
-            writeCalculationDetails(writer, snapshot)
+            writeCalculationDetails(writer, snapshot, rateSet)
             writeDayAudit(writer, snapshot)
-            writeGroupedControl(writer, snapshot, includeDetails = true)
-            writeSources(writer, snapshot)
+            writeGroupedControl(writer, snapshot, rateSet, includeDetails = true)
+            writeSources(writer, snapshot, rateSet)
         }
 
         writer.finish()
@@ -79,7 +82,7 @@ object PdfExporter {
      * hvilket beløp som skal vurderes, hvem som betaler og hva beløpet består av.
      * Juridisk sporbarhet og kontrollinformasjon kommer etterpå, i kompakt form.
      */
-    private fun writeExecutiveSummary(w: PdfWriter, s: FinalizedTripSnapshot, includeFooter: Boolean) {
+    private fun writeExecutiveSummary(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet, includeFooter: Boolean) {
         w.documentLabel(if (includeFooter) "KORT OPPSUMMERING" else "FULLT BEREGNINGSGRUNNLAG")
         w.h1(s.title.ifBlank { "Ferietur" })
         w.p("${dateTime(s.tripStart)} - ${dateTime(s.tripEnd)}")
@@ -171,7 +174,7 @@ object PdfExporter {
                 " Beløpet kan derfor bli høyere når regelen er avklart."
             }
             w.warningLine(sentenceWithFollowUp(
-                "Betalingsforslaget er ikke endelig: ${s.unresolvedRules.joinToString("; ") { plainRuleTitle(it) }}",
+                "Betalingsforslaget er ikke endelig: ${s.unresolvedRules.joinToString("; ") { plainRuleTitle(it, rateSet) }}",
                 extra,
             ))
         }
@@ -179,7 +182,7 @@ object PdfExporter {
         if (includeFooter) {
             w.rule()
             w.smallText(shortFooterDescription(s.rosterComparisonMode))
-            w.footerMeta("Lønnstrinn ${s.salaryStep} · ${weeklyBasisLabel(s.weeklyBasis)} full arbeidsuke · ${s.weekendProfile.label}")
+            w.footerMeta("Lønnstrinn ${s.salaryStep} · ${weeklyBasisLabel(s.weeklyBasis)} full arbeidsuke · ${rateSet.weekendRate(s.weekendProfile).label}")
             w.footerMeta("Beregning-ID ${s.id} · opprettet ${dateTime(s.createdAt)}")
         }
     }
@@ -229,13 +232,13 @@ object PdfExporter {
         }
     }
 
-    private fun writeCalculationDetails(w: PdfWriter, s: FinalizedTripSnapshot) {
+    private fun writeCalculationDetails(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet) {
         w.h1("Hvorfor blir beløpet slik?")
         w.p("Hver post under viser hva som er beregnet, hvordan beløpet er regnet og hvilken regel som er brukt.")
 
         s.calculation.lines
             .filter { it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS }
-            .forEach { line -> writeDetailedLine(w, line, alreadyCovered = false) }
+            .forEach { line -> writeDetailedLine(w, line, rateSet, alreadyCovered = false) }
 
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
             w.h2("Grunnturnus - forutsetning i beregningen")
@@ -255,18 +258,18 @@ object PdfExporter {
                 heading = "Beløp eller regler som må avklares",
                 title = plainLineTitle(first),
                 formula = plainFormula(first),
-                explanation = plainLineExplanation(first),
+                explanation = plainLineExplanation(first, rateSet),
                 source = first.source,
             )
             w.h2("Beløp eller regler som må avklares")
-            openLines.forEach { line -> writeDetailedLine(w, line, alreadyCovered = false) }
+            openLines.forEach { line -> writeDetailedLine(w, line, rateSet, alreadyCovered = false) }
         }
     }
 
     private fun shouldRenderDetailedLine(line: CalculationLine): Boolean =
         !(line.amount == BigDecimal.ZERO && line.paymentTreatment == PaymentTreatment.OPEN && line.certainty != CalculationCertainty.OPEN)
 
-    private fun writeDetailedLine(w: PdfWriter, line: CalculationLine, alreadyCovered: Boolean) {
+    private fun writeDetailedLine(w: PdfWriter, line: CalculationLine, rateSet: TariffRateSet, alreadyCovered: Boolean) {
         if (!shouldRenderDetailedLine(line)) return
         val amountLabel = when {
             line.paymentTreatment == PaymentTreatment.OPEN && line.amount > BigDecimal.ZERO -> "Mulig ${money(line.amount)}"
@@ -278,7 +281,7 @@ object PdfExporter {
             title = plainLineTitle(line),
             amount = amountLabel,
             formula = plainFormula(line),
-            explanation = plainLineExplanation(line),
+            explanation = plainLineExplanation(line, rateSet),
             source = line.source,
             warning = line.paymentTreatment == PaymentTreatment.OPEN,
         )
@@ -323,7 +326,7 @@ object PdfExporter {
         w.smallText("Dagsbeløp fordeles til øre slik at de summerer tilbake til hovedpostene. Små avrundingsforskjeller kan derfor forekomme på enkeltdager.")
     }
 
-    private fun writeGroupedControl(w: PdfWriter, s: FinalizedTripSnapshot, includeDetails: Boolean) {
+    private fun writeGroupedControl(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet, includeDetails: Boolean) {
         w.h1("Arbeidstid som bør vurderes")
         w.p("Appen viser forhold i arbeidsplanen som bør kontrolleres mot arbeidstidsordningen som gjelder. Den avgjør ikke om arbeidsordningen er lovlig.")
         w.compactNote("Hvilende nattevakt og arbeidstid", "Hvilende nattevakt regnes som arbeidstid når arbeidstiden kontrolleres, selv om betalingen beregnes annerledes.")
@@ -357,15 +360,15 @@ object PdfExporter {
             s.unresolvedRules.forEach { rule ->
                 val possible = possibleAmountForRule(s, rule.id)
                 val explanation = buildString {
-                    append(plainRuleExplanation(rule))
+                    append(plainRuleExplanation(rule, rateSet))
                     if (possible > BigDecimal.ZERO) append(" Med dagens registrerte timer og satser er mulig tillegg ${money(possible)}. Beløpet er ikke inkludert i betalingsgrunnlaget.")
                 }
-                w.openRule(plainRuleTitle(rule), explanation, rule.source)
+                w.openRule(plainRuleTitle(rule, rateSet), explanation, rule.source)
             }
         }
     }
 
-    private fun writeSources(w: PdfWriter, s: FinalizedTripSnapshot) {
+    private fun writeSources(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet) {
         w.h2("Grunnlaget som er brukt")
         w.p("Opplysningene under er fryst sammen med beregningen, slik at den kan kontrolleres senere.")
         w.summaryLine("Arbeidsgiver", employerLabel(s.employerKind))
@@ -376,10 +379,11 @@ object PdfExporter {
         w.summaryLine("Lønnstrinn", s.salaryStep.toString())
         w.summaryLine("Årslønn", money(s.annualSalary))
         w.summaryLine("Full arbeidsuke", weeklyBasisLabel(s.weeklyBasis))
-        w.summaryLine("Lørdags- og søndagssats", s.weekendProfile.label)
+        w.summaryLine("Lørdags- og søndagssats", rateSet.weekendRate(s.weekendProfile).label)
         w.summaryLine("Kontrollert mot lønnsslipp", if (s.payslipChecked) "Ja" else "Nei")
         w.rule()
         w.footerMeta("Regelversjon: FERIETUR01 ${s.rulesetVersion} · appversjon: ${s.appVersionName} · build ${s.appVersionCode}")
+        w.footerMeta("Tariffpakke-ID: ${s.tariffPackageId} · satssett-ID: ${s.tariffRateSetId}")
         w.footerMeta("Lønnstabell-ID: ${s.salaryTableId} · gyldig fra ${date(s.salaryTableEffectiveFrom)}")
         w.footerMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")
     }
@@ -455,34 +459,34 @@ object PdfExporter {
         }
     }
 
-    internal fun plainLineExplanation(line: CalculationLine): String = when (line.id) {
+    internal fun plainLineExplanation(line: CalculationLine, rateSet: TariffRateSet = FerieturTariffRates.current): String = when (line.id) {
         "active" -> if (line.title.contains("utenfor grunnturnusen")) {
             buildString {
-                append("I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag for arbeid som er forutsatt dekket gjennom ordinær lønn. Timer modellen klassifiserer som arbeid i tillegg til grunnturnusen beregnes her med timelønn pluss 50 prosent. Dok. 25 punkt 20.2 fastsetter at arbeidstid ut over ordinær arbeidstid etter kapittel 8 kompenseres med timelønn pluss 50 prosent.")
+                append("I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag for arbeid som er forutsatt dekket gjennom ordinær lønn. Timer modellen klassifiserer som arbeid i tillegg til grunnturnusen beregnes her med timelønn pluss ${pdfPercent(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent. Dok. 25 punkt 20.2 fastsetter at arbeidstid ut over ordinær arbeidstid etter kapittel 8 kompenseres med timelønn pluss ${pdfPercent(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent.")
                 if (line.source.contains("20.3")) append(" Reise med ansvar for beboeren er med i disse timene fordi reisetid med aktivt tilsyn regnes som arbeidstid etter punkt 20.3.")
                 append(" Hvilken arbeidsplan og eventuell gjennomsnittsberegning som gjelder for ferieoppholdet må avklares med arbeidsgiver. På de samme minuttene som modellen behandler etter punkt 20.2, legger appen ikke til kveld-/nattillegg eller lørdags-/søndagstillegg fra kapittel 12. Punkt 12.1.1 og 12.2.2 gjelder ordinær tjeneste og utelukker overtid. På særskilte høytidsdager bruker appen punkt 20.2 som den spesifikke ferieoppholdsregelen; punkt 13.1 sier at kapittel 13 gjelder dersom ikke annet er fastsatt i tariffavtalen.")
             }
         } else {
             line.explanation
         }
-        "resting-night" -> "Hele vakten teller som arbeidstid. For hver tre timer hvilende nattevakt betales det som én vanlig arbeidstime. Eksempel: 9 timer gir betaling som tilsvarer 3 timer."
-        "resting-evening-night" -> "Kveld- og nattillegget beregnes også for én tredel av den hvilende tiden."
-        "resting-weekend" -> "Lørdags- og søndagstillegget på en hvilende vakt beregnes for en tredel av den hvilende tiden. Timer med høyere høytidstillegg tas ikke med her."
-        "resting-holiday" -> "Når en hvilende vakt ligger i en høytidsperiode, beregnes høytidstillegget også for én tredel av tiden."
-        "evening-night" -> "For relevant turnus er tillegget 40 prosent for ordinært arbeid mellom kl. 17:00 og 06:00. For nattevakt kan tillegget fortsette til vakten slutter, senest kl. 08:00."
+        "resting-night" -> "Hele vakten teller som arbeidstid. Betalingen beregnes i forholdet ${pdfPassiveRatio(rateSet)}."
+        "resting-evening-night" -> "Kveld- og nattillegget beregnes også for ${pdfPassiveShare(rateSet)} av den hvilende tiden."
+        "resting-weekend" -> "Lørdags- og søndagstillegget på en hvilende vakt beregnes for ${pdfPassiveShare(rateSet)} av den hvilende tiden. Timer med høyere høytidstillegg tas ikke med her."
+        "resting-holiday" -> "Når en hvilende vakt ligger i en høytidsperiode, beregnes høytidstillegget også for ${pdfPassiveShare(rateSet)} av tiden."
+        "evening-night" -> "For relevant turnus er tillegget ${pdfPercent(rateSet.eveningNightFraction)} prosent for ordinært arbeid mellom kl. ${pdfClock(rateSet.eveningStart)} og ${pdfClock(rateSet.nightEnd)}. For nattevakt kan tillegget fortsette til vakten slutter, senest kl. ${pdfClock(rateSet.nightWatchSupplementEnd)}."
         "weekend" -> "Dette er tillegget for ordinært arbeid fra lørdag kl. 00:00 til søndag kl. 24:00. Appen bruker satsen som er kontrollert mot lønnsslippen."
         "holiday" -> "Dette er tillegget for ordinært arbeid i helge- og høytidsperiodene som Dok. 25 lister opp. Satsen i regnestykket er selve tillegget per time."
-        "stay-allowance" -> "Ved ferieopphold som omfattes av kapittel 20 gis 110 kroner per døgn i tillegg til lønnen. Et påbegynt døgn teller når resttiden er mer enn seks timer."
-        "active-on-resting" -> "Aktiv tid under en hvilende nattevakt summeres per vakt og rundes til nærmeste halve time. Den avrundede tiden betales med timelønn pluss 50 prosent."
-        "travel-without-responsibility" -> "Reisetid uten tilsynsansvar beregnes etter punkt 18.4. Utenfor ordinær arbeidstid godtgjøres den ordinære reisetiden med ordinær timelønn. Varseltidspunktet registreres på reiseperioden. Hvis reisen ikke var kjent senest dagen i forveien, står ordinær reisetidsbetaling fortsatt på denne linjen, mens overtidsdelen for inntil to timer vises separat."
-        "travel-notice-open" -> "Ordinær reisetidsbetaling er allerede med. Det må avklares om reisen var kjent senest dagen i forveien, fordi punkt 18.4 kan gi overtidsbetaling for inntil to timer reisetid som kreves utført utenfor ordinær arbeidstid. Beløpet på den åpne posten er et mulig tillegg og er ikke inkludert i betalingsgrunnlaget."
-        "travel-short-notice-overtime" -> "Reisen er registrert som ikke kjent senest dagen i forveien. Punkt 18.4 gir da overtidsbetaling for inntil to timer av reisetiden utenfor ordinær arbeidstid. Den ordinære timelønnen står på reisetidslinjen; denne posten er bare overtidsdelen i tillegg. Beregningsmodellen bruker de første inntil to faktiske timene med kortvarslet ordinær reisetid i turen og avrunder overtidsdelen til påbegynt halvtime etter punkt 13.3."
-        "travel-short-notice-133-open" -> "Punkt 13.7.3 kan gi 133 1/3 prosent overtidstillegg på særskilt opplistede dager for arbeidstakere som har ordinær tjeneste på søn- og helgedager. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen. Bekreftet overtidsbetaling etter de øvrige overtidsreglene er allerede med; beløpet her viser bare mulig differanse dersom punkt 13.7.3 gjelder."
-        "travel-passive-night" -> "For nattreise mellom kl. 23:00 og 07:00 der arbeidstakeren hadde tillatelse til å sove, regnes tiden som arbeid av passiv karakter. Tiden teller som arbeidstid time for time, mens grunnbetalingen er 1/3 timelønn per time."
-        "travel-passive-evening-night" -> "Kveld- og nattillegg under passiv nattreise betales i forholdet 1:3. For reise brukes ordinære tidsgrenser for kveld/natt; perioden behandles ikke som nattevakt."
-        "travel-passive-weekend" -> "Lørdags- og søndagstillegg under passiv nattreise betales i forholdet 1:3. Timer med høyere helge- og høytidstillegg tas ikke med her."
-        "travel-passive-holiday" -> "Helge- og høytidstillegg under passiv nattreise betales i forholdet 1:3."
-        "travel-night-sleep-open" -> "Søvntillatelsen er ikke avklart for nattreisen mellom kl. 23:00 og 07:00. Nattdelen er derfor ikke lagt til betalingsgrunnlaget."
+        "stay-allowance" -> "Ved ferieopphold som omfattes av kapittel 20 gis ${pdfDecimal(rateSet.stayAllowancePerDay)} kroner per døgn i tillegg til lønnen. Et påbegynt døgn teller når resttiden er mer enn ${pdfDurationWords(rateSet.stayAllowanceRemainderThresholdMinutes)}."
+        "active-on-resting" -> "Aktiv tid under en hvilende nattevakt summeres per vakt og rundes til nærmeste ${pdfRoundingUnitDefinite(rateSet.activeNightRoundingStepMinutes.toLong())}. Den avrundede tiden betales med timelønn pluss ${pdfPercent(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent."
+        "travel-without-responsibility" -> "Reisetid uten tilsynsansvar beregnes etter punkt 18.4. Utenfor ordinær arbeidstid godtgjøres den ordinære reisetiden med ordinær timelønn. Varseltidspunktet registreres på reiseperioden. Hvis reisen ikke var kjent senest dagen i forveien, står ordinær reisetidsbetaling fortsatt på denne linjen, mens overtidsdelen for inntil ${pdfDurationWords(rateSet.shortNoticeMaxMinutes)} vises separat."
+        "travel-notice-open" -> "Ordinær reisetidsbetaling er allerede med. Det må avklares om reisen var kjent senest dagen i forveien, fordi punkt 18.4 kan gi overtidsbetaling for inntil ${pdfDurationWords(rateSet.shortNoticeMaxMinutes)} reisetid som kreves utført utenfor ordinær arbeidstid. Beløpet på den åpne posten er et mulig tillegg og er ikke inkludert i betalingsgrunnlaget."
+        "travel-short-notice-overtime" -> "Reisen er registrert som ikke kjent senest dagen i forveien. Punkt 18.4 gir da overtidsbetaling for inntil ${pdfDurationWords(rateSet.shortNoticeMaxMinutes)} av reisetiden utenfor ordinær arbeidstid. Den ordinære timelønnen står på reisetidslinjen; denne posten er bare overtidsdelen i tillegg. Beregningsmodellen bruker de første inntil ${pdfDurationWords(rateSet.shortNoticeMaxMinutes)} med kortvarslet ordinær reisetid i turen og avrunder overtidsdelen til påbegynt ${pdfRoundingUnitIndefinite(rateSet.overtimeRoundingStepMinutes)} etter punkt 13.3."
+        "travel-short-notice-133-open" -> "Punkt 13.7.3 kan gi ${pdfSpecialOvertimePercent(rateSet)} prosent overtidstillegg på særskilt opplistede dager for arbeidstakere som har ordinær tjeneste på søn- og helgedager. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen. Bekreftet overtidsbetaling etter de øvrige overtidsreglene er allerede med; beløpet her viser bare mulig differanse dersom punkt 13.7.3 gjelder."
+        "travel-passive-night" -> "For nattreise mellom kl. ${pdfClock(rateSet.travelSleepWindowStart)} og ${pdfClock(rateSet.travelSleepWindowEnd)} der arbeidstakeren hadde tillatelse til å sove, regnes tiden som arbeid av passiv karakter. Tiden teller som arbeidstid time for time, mens grunnbetalingen er ${pdfPassiveFraction(rateSet)} timelønn per time."
+        "travel-passive-evening-night" -> "Kveld- og nattillegg under passiv nattreise betales i forholdet ${pdfPassiveRatio(rateSet)}. For reise brukes ordinære tidsgrenser for kveld/natt; perioden behandles ikke som nattevakt."
+        "travel-passive-weekend" -> "Lørdags- og søndagstillegg under passiv nattreise betales i forholdet ${pdfPassiveRatio(rateSet)}. Timer med høyere helge- og høytidstillegg tas ikke med her."
+        "travel-passive-holiday" -> "Helge- og høytidstillegg under passiv nattreise betales i forholdet ${pdfPassiveRatio(rateSet)}."
+        "travel-night-sleep-open" -> "Søvntillatelsen er ikke avklart for nattreisen mellom kl. ${pdfClock(rateSet.travelSleepWindowStart)} og ${pdfClock(rateSet.travelSleepWindowEnd)}. Nattdelen er derfor ikke lagt til betalingsgrunnlaget."
         "travel-responsibility-open" -> "Det er ikke avklart om du hadde ansvar for beboeren under reisen. Derfor er reisetiden ikke ferdig klassifisert i beregningen."
         else -> line.explanation
     }
@@ -540,19 +544,52 @@ object PdfExporter {
         .trim()
         .trimEnd('.', ' ')
 
-    private fun plainRuleTitle(rule: DomainRule): String = when (rule.id) {
+    private fun plainRuleTitle(rule: DomainRule, rateSet: TariffRateSet = FerieturTariffRates.current): String = when (rule.id) {
         "D25_18_4_NOTICE" -> "Var reisen kjent senest dagen i forveien?"
-        "D25_18_4_X13_7_3" -> "Gjelder 133 1/3 prosent overtid på den særskilte dagen?"
+        "D25_18_4_X13_7_3" -> "Gjelder ${pdfSpecialOvertimePercent(rateSet)} prosent overtid på den særskilte dagen?"
         "D25_20_3_SLEEP_PERMISSION" -> "Hadde arbeidstakeren tillatelse til å sove under nattreisen?"
         else -> rule.title
     }
 
-    private fun plainRuleExplanation(rule: DomainRule): String = when (rule.id) {
-        "D25_18_4_NOTICE" -> "Punkt 18.4 sier at dersom arbeidstakeren ikke fikk vite om reisen senest dagen i forveien, betales inntil to timer av reisetiden som overtid når den kreves utført utenfor ordinær arbeidstid. Ordinær reisetidsbetaling er allerede med; varseltidspunktet må avklares for å vite om overtidsdelen også skal med."
-        "D25_18_4_X13_7_3" -> "Punkt 13.7.3 gir 133 1/3 prosent overtidstillegg på særskilt opplistede dager for arbeidstakere som har ordinær tjeneste på søn- og helgedager. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen."
-        "D25_20_3_SLEEP_PERMISSION" -> "Punkt 20.3 sier at reisetid mellom kl. 23:00 og 07:00 beregnes som arbeid av passiv karakter når arbeidstakeren har tillatelse til å sove. Nattdelen holdes derfor utenfor betalingsgrunnlaget til dette er avklart."
+    private fun plainRuleExplanation(rule: DomainRule, rateSet: TariffRateSet): String = when (rule.id) {
+        "D25_18_4_NOTICE" -> "Punkt 18.4 sier at dersom arbeidstakeren ikke fikk vite om reisen senest dagen i forveien, betales inntil ${pdfDurationWords(rateSet.shortNoticeMaxMinutes)} av reisetiden som overtid når den kreves utført utenfor ordinær arbeidstid. Ordinær reisetidsbetaling er allerede med; varseltidspunktet må avklares for å vite om overtidsdelen også skal med."
+        "D25_18_4_X13_7_3" -> "Punkt 13.7.3 gir ${pdfSpecialOvertimePercent(rateSet)} prosent overtidstillegg på særskilt opplistede dager for arbeidstakere som har ordinær tjeneste på søn- og helgedager. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen."
+        "D25_20_3_SLEEP_PERMISSION" -> "Punkt 20.3 sier at reisetid mellom kl. ${pdfClock(rateSet.travelSleepWindowStart)} og ${pdfClock(rateSet.travelSleepWindowEnd)} beregnes som arbeid av passiv karakter når arbeidstakeren har tillatelse til å sove. Nattdelen holdes derfor utenfor betalingsgrunnlaget til dette er avklart."
         else -> "Denne regelen må avklares før beregningen kan regnes som komplett."
     }
+
+    private fun pdfPercent(fraction: BigDecimal): String =
+        fraction.multiply(BigDecimal(100)).stripTrailingZeros().toPlainString().replace('.', ',')
+
+    private fun pdfDecimal(value: BigDecimal): String =
+        value.stripTrailingZeros().toPlainString().replace('.', ',')
+
+    private fun pdfClock(value: java.time.LocalTime): String =
+        value.format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    private fun pdfDurationWords(value: Long): String = when (value) {
+        120L -> "to timer"
+        360L -> "seks timer"
+        else -> minutes(value)
+    }
+
+    private fun pdfPassiveRatio(rateSet: TariffRateSet): String =
+        "1:${rateSet.passiveWorkDivisor}"
+
+    private fun pdfPassiveFraction(rateSet: TariffRateSet): String =
+        "1/${rateSet.passiveWorkDivisor}"
+
+    private fun pdfPassiveShare(rateSet: TariffRateSet): String =
+        if (rateSet.passiveWorkDivisor == 3) "én tredel" else pdfPassiveFraction(rateSet)
+
+    private fun pdfRoundingUnitDefinite(minutes: Long): String =
+        if (minutes == 30L) "halve time" else "$minutes minutter"
+
+    private fun pdfRoundingUnitIndefinite(minutes: Long): String =
+        if (minutes == 30L) "halvtime" else "$minutes-minuttersperiode"
+
+    private fun pdfSpecialOvertimePercent(rateSet: TariffRateSet): String =
+        rateSet.specialOvertimePercentageLabel
 
     private fun possibleAmountForRule(s: FinalizedTripSnapshot, ruleId: String): BigDecimal {
         val lineIds: Set<String> = when (ruleId) {

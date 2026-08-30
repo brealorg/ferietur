@@ -6,8 +6,11 @@ import java.time.LocalDate
 object OsloSalaryTable2026 {
     const val tableId = "oslo-salary-2026-05-01"
     val effectiveFromDate: LocalDate = LocalDate.of(2026, 5, 1)
+    val verifiedThroughDate: LocalDate = LocalDate.of(2027, 4, 30)
     const val effectiveFrom = "01.05.2026"
+    const val tariffPackageId = FerieturTariffs.DOK25_2026_2028_ID
     const val sourceLabel = "Lønnstabell Oslo kommune fra 01.05.2026"
+    const val sourcePageUrl = "https://www.oslo.kommune.no/jobb-i-oslo-kommune/"
 
     private val annualSalaryByStep = mapOf(
         1 to 473350,

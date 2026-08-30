@@ -17,6 +17,9 @@ for f in \
     app/src/main/java/app/ferietur/ui/AppInfoPreferences.kt \
     app/src/main/java/app/ferietur/ui/AppInfoContact.kt \
     app/src/main/java/app/ferietur/domain/TripPlanEngine.kt \
+    app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+    app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+    app/src/main/java/app/ferietur/domain/TariffResolution.kt \
     app/src/main/java/app/ferietur/domain/SavedTripDraft.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt \
@@ -40,6 +43,9 @@ prefs = (root/'app/src/main/java/app/ferietur/ui/AppInfoPreferences.kt').read_te
 manifest = (root/'app/src/main/AndroidManifest.xml').read_text(encoding='utf-8')
 gradle = (root/'app/build.gradle.kts').read_text(encoding='utf-8')
 engine = (root/'app/src/main/java/app/ferietur/domain/TripPlanEngine.kt').read_text(encoding='utf-8')
+tariff_catalog = (root/'app/src/main/java/app/ferietur/domain/TariffCatalog.kt').read_text(encoding='utf-8')
+tariff_rates = (root/'app/src/main/java/app/ferietur/domain/TariffRateSet.kt').read_text(encoding='utf-8')
+tariff_resolution = (root/'app/src/main/java/app/ferietur/domain/TariffResolution.kt').read_text(encoding='utf-8')
 draft = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraft.kt').read_text(encoding='utf-8')
 finalized = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt').read_text(encoding='utf-8')
 snapshot_codec = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshotCodec.kt').read_text(encoding='utf-8')
@@ -126,16 +132,27 @@ req('val finalizedSnapshot: FinalizedTripSnapshot? = null' in draft, 'persisted_
 req('val finalizationHistory: List<FinalizedTripSnapshot>' in draft, 'finalization_history_field_missing')
 req('val migrationHistory: Set<String>' in draft, 'migration_provenance_field_missing')
 req('FinalizedTripSnapshotCodec.encode' in draft and 'FinalizedTripSnapshotCodec.decode' in draft, 'snapshot_codec_not_wired_to_draft')
-req('FORMAT_VERSION = 1' in snapshot_codec, 'snapshot_codec_version_missing')
+req('LEGACY_FORMAT_VERSION = 1' in snapshot_codec and 'FORMAT_VERSION = 2' in snapshot_codec, 'snapshot_codec_version_migration_missing')
 req('writeCalculation' in snapshot_codec and 'readCalculation' in snapshot_codec, 'calculation_not_persisted_in_snapshot_codec')
 req('UUID.fromString(snapshotId)' in finalized, 'snapshot_uuid_validation_missing')
 req('UUID.randomUUID().toString()' in finalized, 'snapshot_uuid_default_missing')
 req('val appVersionName: String' in finalized and 'val appVersionCode: Int' in finalized, 'snapshot_build_metadata_missing')
 req('val rulesetVersion: String' in finalized, 'snapshot_ruleset_metadata_missing')
+req('val tariffPackageId: String' in finalized and 'val tariffRateSetId: String' in finalized, 'snapshot_tariff_provenance_missing')
 req('val salaryTableId: String' in finalized and 'val salaryTableEffectiveFrom: LocalDate' in finalized, 'snapshot_salary_table_metadata_missing')
 req('BuildConfig.VERSION_NAME' in ui and 'appVersionName = BuildConfig.VERSION_NAME' in ui, 'production_build_version_not_frozen')
 req('appVersionCode = BuildConfig.VERSION_CODE' in ui, 'production_build_code_not_frozen')
-req('rulesetVersion = FERIETUR_RULESET_VERSION' in ui, 'production_ruleset_not_frozen')
+req('rulesetVersion = tariffPackage.rulesetVersion' in ui, 'production_ruleset_not_bound_to_tariff_package')
+req('tariffPackageId = tariffPackage.id' in ui and 'tariffRateSetId = tariffRateSet.id' in ui, 'production_tariff_provenance_not_frozen')
+req('DOK25_2026_2028_RULESET_VERSION = "2026.3"' in tariff_catalog, 'tariff_package_ruleset_not_immutable')
+req('rulesetVersion = DOK25_2026_2028_RULESET_VERSION' in tariff_catalog, 'tariff_package_uses_moving_global_ruleset')
+req('rateSetId:' not in tariff_catalog, 'tariff_package_still_owns_single_rate_set')
+req('class TariffRateSetCatalog' in tariff_rates and 'fun requireForRange' in tariff_rates, 'effective_dated_rate_catalog_missing')
+req('effectiveFrom: LocalDate' in tariff_rates and 'effectiveTo: LocalDate' in tariff_rates, 'rate_set_effective_dates_missing')
+req('object FerieturTariffResolver' in tariff_resolution and 'ResolvedTariffContext' in tariff_resolution, 'coherent_tariff_resolver_missing')
+req('FerieturTariffs.DOK25_2026_2028_RULESET_VERSION' in snapshot_codec, 'legacy_v1_tariff_inference_not_version_pinned')
+req('FerieturTariffRates.requireById(snapshot.tariffRateSetId)' in pdf_exporter, 'PDF_not_bound_to_frozen_rate_set')
+req('${s.tariffPackageId}' in pdf_exporter and '${s.tariffRateSetId}' in pdf_exporter, 'PDF_tariff_provenance_not_rendered')
 req('salaryTableId = salaryTable.id' in ui and 'salaryTableEffectiveFrom = salaryTable.effectiveFrom' in ui, 'resolved_salary_table_not_frozen')
 req('rebuildFinalizedSnapshot' not in ui, 'finalized_snapshot_still_rebuilt_on_reopen')
 req('finalizedSnapshot = effectiveSaved.finalizedSnapshot' in ui, 'persisted_snapshot_not_restored')
@@ -200,6 +217,8 @@ range_policy = range_policy_path.read_text(encoding='utf-8')
 salary_tables = salary_tables_path.read_text(encoding='utf-8')
 new_defaults = new_defaults_path.read_text(encoding='utf-8')
 salary2026 = (root/'app/src/main/java/app/ferietur/domain/OsloSalaryTable2026.kt').read_text(encoding='utf-8')
+tariff_rates_path = root/'app/src/main/java/app/ferietur/domain/TariffRateSet.kt'
+req(tariff_rates_path.is_file(), 'TariffRateSet_missing')
 
 # CA-001
 req('coerceAtMost(30)' not in ui, '31_day_truncation_regressed')
@@ -220,12 +239,47 @@ req(re.search(r'FlowScreen\.PAY\s*->\s*payslipChecked', ui), 'pay_confirmation_g
 # CA-006
 req('effectiveFromDate: LocalDate' in salary2026, 'typed_salary_effective_date_missing')
 req('object OsloSalaryTables' in salary_tables, 'effective_dated_salary_catalog_missing')
+req('class SalaryTableCatalog' in salary_tables and 'class SalaryTablePeriod' in salary_tables, 'extensible_salary_catalog_missing')
 req('earliestSupportedDate' in salary_tables, 'salary_earliest_supported_date_missing')
-req('salaryRangeSupported' in ui, 'salary_range_support_state_missing')
+req('salaryRangeSupported' in ui and 'FerieturTariffResolver.supportsRange(startDate, endDate)' in ui, 'tariff_salary_range_support_state_missing')
 req('FlowScreen.TRIP -> validRange && chapter20Applicable && salaryRangeSupported' in ui, 'unsupported_salary_range_not_blocking_flow')
 req('SelectableDates' in ui and 'minimumDate' in ui, 'salary_min_date_picker_guard_missing')
-req('OsloSalaryTables.requireSupportedRange' in ui, 'hard_salary_calculation_guard_missing')
+req('FerieturTariffResolver.requireSupportedRange' in ui, 'coherent_tariff_calculation_guard_missing')
+req('object FerieturTariffRates' in tariff_rates and 'DOK25_2026_2028_RATE_SET_ID' in tariff_rates, 'versioned_tariff_rate_set_missing')
+req('rateSet: TariffRateSet = FerieturTariffRates.current' in engine, 'calculation_rate_set_not_injected')
+req('private fun checkedPreliminaryCalculation' in ui and 'val tariffContext = FerieturTariffResolver.requireSupportedRange' in ui and 'val rateSet = tariffContext.rateSet' in ui and 'rateSet = rateSet' in ui, 'interactive_calculation_not_date_resolved_to_rate_set')
+req('private fun tariffRateSetForRange' in ui and 'FerieturTariffResolver.requireSupportedRange(start, end).rateSet' in ui and 'TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)' in ui, 'interactive_control_findings_not_date_resolved_to_rate_set')
+for token in [
+    'rateSet.chapter20ActiveMultiplier',
+    'rateSet.passiveWorkDivisor',
+    'rateSet.stayAllowancePerDay',
+    'rateSet.stayAllowanceRemainderThresholdMinutes',
+    'rateSet.shortNoticeMaxMinutes',
+    'rateSet.overtimeRoundingStepMinutes',
+    'rateSet.overtimeStandardFraction',
+    'rateSet.overtimeHighFraction',
+    'rateSet.eveningStart',
+    'rateSet.nightEnd',
+    'rateSet.nightWatchSupplementEnd',
+    'rateSet.travelSleepWindowStart',
+    'rateSet.travelSleepWindowEnd',
+]:
+    req(token in engine, f'rate_set_value_not_consumed_{token.split(".")[-1]}')
+for forbidden in [
+    'BigDecimal("1.50")',
+    'BigDecimal("110")',
+    'BigDecimal("0.50")',
+    'BigDecimal("1.3333333333")',
+    'LocalTime.of(17, 0)',
+    'LocalTime.of(6, 0)',
+    'LocalTime.of(8, 0)',
+    'LocalTime.of(23, 0)',
+    'LocalTime.of(20, 0)',
+]:
+    req(forbidden not in engine, f'calculation_constant_leaked_back_into_engine_{forbidden}')
 req('unsupportedSalaryRange' in ui and 'FlowScreen.TRIP' in ui, 'legacy_unsupported_salary_resume_guard_missing')
+req('D25_20_6_EXACT_THRESHOLD' in engine, 'exact_six_hour_boundary_not_fail_closed')
+req('stay-allowance-exact-threshold-open' in engine, 'exact_six_hour_open_line_missing')
 
 print('FIX01_CA001_RANGE_CORRECTNESS_CONTRACT=PASS')
 print('FIX01_CA004_NEW_TRIP_DEFAULTS_CONTRACT=PASS')

@@ -161,8 +161,8 @@ import app.ferietur.domain.DayCalculationContribution
 import app.ferietur.domain.DayProjectedBlock
 import app.ferietur.domain.DomainRule
 import app.ferietur.domain.EmployerKind
-import app.ferietur.domain.FERIETUR_RULESET_VERSION
 import app.ferietur.domain.FerieturRules
+import app.ferietur.domain.FerieturTariffResolver
 import app.ferietur.domain.FinalizedTripSnapshot
 import app.ferietur.domain.FinalizedTripSnapshotBuilder
 import app.ferietur.domain.SettlementSnapshot
@@ -540,7 +540,7 @@ fun FerieturApp() {
 
     val fundingMode = rosterComparisonMode.toFundingMode()
     val dates = tripDates(startDate, endDate)
-    val salaryRangeSupported = OsloSalaryTables.supportsRange(startDate, endDate)
+    val salaryRangeSupported = FerieturTariffResolver.supportsRange(startDate, endDate)
     val rosterHasOverlap = TripPlanEngine.hasRosterOverlap(roster)
     val rosterComplete = dates.all { date -> RosterEntryCodec.decode(roster[date]).isNotEmpty() } && !rosterHasOverlap
     val annualSalary = OsloSalaryTables.annualSalaryForRange(salaryStep, startDate, endDate) ?: BigDecimal.ZERO
@@ -663,7 +663,7 @@ fun FerieturApp() {
         salaryStep = effectiveSaved.salaryStep
         weeklyBasis = effectiveSaved.weeklyBasis
         weekendProfile = effectiveSaved.weekendProfile
-        val unsupportedSalaryRange = !OsloSalaryTables.supportsRange(
+        val unsupportedSalaryRange = !FerieturTariffResolver.supportsRange(
             effectiveSaved.startDate,
             effectiveSaved.endDate,
         )
@@ -872,7 +872,10 @@ fun FerieturApp() {
                 customAmountText = settlementAmountText,
                 reason = settlementReason,
             )
-            val salaryTable = OsloSalaryTables.requireSupportedRange(startDate, endDate)
+            val tariffContext = FerieturTariffResolver.requireSupportedRange(startDate, endDate)
+            val tariffPackage = tariffContext.tariffPackage
+            val tariffRateSet = tariffContext.rateSet
+            val salaryTable = tariffContext.salaryTable
             finalizedSnapshot = FinalizedTripSnapshotBuilder.build(
                 title = tripTitle,
                 employerKind = employerKind,
@@ -898,7 +901,9 @@ fun FerieturApp() {
                 snapshotId = UUID.randomUUID().toString(),
                 appVersionName = BuildConfig.VERSION_NAME,
                 appVersionCode = BuildConfig.VERSION_CODE,
-                rulesetVersion = FERIETUR_RULESET_VERSION,
+                rulesetVersion = tariffPackage.rulesetVersion,
+                tariffPackageId = tariffPackage.id,
+                tariffRateSetId = tariffRateSet.id,
                 salaryTableId = salaryTable.id,
                 salaryTableEffectiveFrom = salaryTable.effectiveFrom,
                 salaryTableSourceLabel = salaryTable.sourceLabel,
@@ -1095,6 +1100,7 @@ fun FerieturApp() {
                 chapter20Applicable = chapter20Applicable,
                 salaryRangeSupported = salaryRangeSupported,
                 earliestSalaryDate = OsloSalaryTables.earliestSupportedDate,
+                latestSalaryDate = OsloSalaryTables.latestSupportedDate,
             )
             FlowScreen.METHOD -> CalculationMethodScreen(
                 padding = padding,
@@ -2074,7 +2080,8 @@ private fun TripOverviewScreen(
 ) {
     val unresolvedCount = settlementSummary.unresolvedRuleCount
     val blocks = TripPlanEngine.projectRange(dates, plans)
-    val findings = TripPlanEngine.controlFindings(blocks, unresolvedCount, roster)
+    val rateSet = tariffRateSetForRange(startDate, endDate)
+    val findings = TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)
     val reviewCount = findings.count { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
     val flow = flowSequence(fundingMode)
     val calculationIndex = flow.indexOf(FlowScreen.CALCULATION)
@@ -2279,6 +2286,7 @@ private fun TripBasicsScreen(
     chapter20Applicable: Boolean,
     salaryRangeSupported: Boolean,
     earliestSalaryDate: LocalDate,
+    latestSalaryDate: LocalDate,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -2332,9 +2340,9 @@ private fun TripBasicsScreen(
             item {
                 InlineMessage(
                     FindingSeverity.CRITICAL,
-                    "Datoene støttes ikke av innebygd lønnstabell",
-                    "Ferietur har lønnstabell fra ${fullDate(earliestSalaryDate)}. " +
-                        "Velg en tur som starter denne datoen eller senere.",
+                    "Datoene støttes ikke av verifisert tariff- og lønnsgrunnlag",
+                    "Ferietur har verifisert beregningsgrunnlag innenfor perioden ${fullDate(earliestSalaryDate)}–${fullDate(latestSalaryDate)}. " +
+                        "Hele turen må dekkes av samme verifiserte tariff-, sats- og lønnstabellgrunnlag; ellers stoppes beregningen.",
                 )
             }
         } else if (!chapter20Applicable) {
@@ -4910,7 +4918,8 @@ private fun ControlScreen(
 ) {
     val blocks = TripPlanEngine.projectRange(dates, plans)
     val unresolved = settlementSummary.unresolvedRuleCount
-    val findings = TripPlanEngine.controlFindings(blocks, unresolved, roster)
+    val rateSet = tariffRateSetForRange(dates.first(), dates.last())
+    val findings = TripPlanEngine.controlFindings(blocks, unresolved, roster, rateSet)
     val reviewCount = findings.count {
         it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL
     }
@@ -8375,10 +8384,11 @@ private fun checkedPreliminaryCalculation(
         start = tripStart.toLocalDate(),
         end = tripEnd.toLocalDate(),
     )
-    OsloSalaryTables.requireSupportedRange(
+    val tariffContext = FerieturTariffResolver.requireSupportedRange(
         start = tripStart.toLocalDate(),
         end = tripEnd.toLocalDate(),
     )
+    val rateSet = tariffContext.rateSet
     return TripPlanEngine.calculatePreliminary(
         fundingMode = fundingMode,
         dates = dates,
@@ -8389,8 +8399,12 @@ private fun checkedPreliminaryCalculation(
         weekendProfile = weekendProfile,
         tripStart = tripStart,
         tripEnd = tripEnd,
+        rateSet = rateSet,
     )
 }
+
+private fun tariffRateSetForRange(start: LocalDate, end: LocalDate): app.ferietur.domain.TariffRateSet =
+    FerieturTariffResolver.requireSupportedRange(start, end).rateSet
 
 private fun settlementSummary(
     fundingMode: FundingMode,

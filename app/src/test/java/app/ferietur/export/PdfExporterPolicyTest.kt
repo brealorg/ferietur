@@ -3,12 +3,14 @@ package app.ferietur.export
 import app.ferietur.domain.CalculationCertainty
 import app.ferietur.domain.CalculationLine
 import app.ferietur.domain.PaymentTreatment
+import app.ferietur.domain.FerieturTariffRates
 import app.ferietur.domain.RosterComparisonMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
+import java.time.LocalTime
 
 class PdfExporterPolicyTest {
 
@@ -24,6 +26,29 @@ class PdfExporterPolicyTest {
             "29 t x 76,58 kr/t (23 % av timelønn, minst 73 kr/t)",
             PdfExporter.plainFormula(line),
         )
+    }
+
+    @Test
+    fun rateDependentExplanationReadsTheProvidedFrozenRateSet() {
+        val customRateSet = FerieturTariffRates.current.copy(
+            eveningNightFraction = BigDecimal("0.42"),
+            eveningStart = LocalTime.of(18, 0),
+            nightEnd = LocalTime.of(5, 0),
+            nightWatchSupplementEnd = LocalTime.of(7, 0),
+        )
+        val line = line(
+            id = "evening-night",
+            title = "Kveld- og nattillegg",
+            detail = "Testlinje",
+        )
+
+        val text = PdfExporter.plainLineExplanation(line, customRateSet)
+
+        assertTrue(text.contains("42 prosent"))
+        assertTrue(text.contains("18:00"))
+        assertTrue(text.contains("05:00"))
+        assertTrue(text.contains("07:00"))
+        assertFalse(text.contains("40 prosent"))
     }
 
     @Test

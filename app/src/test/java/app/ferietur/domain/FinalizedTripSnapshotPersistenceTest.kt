@@ -83,9 +83,24 @@ class FinalizedTripSnapshotPersistenceTest {
         assertEquals("1.0.0-rc1", snapshot.appVersionName)
         assertEquals(100, snapshot.appVersionCode)
         assertEquals("2026.3", snapshot.rulesetVersion)
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, snapshot.tariffPackageId)
+        assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, snapshot.tariffRateSetId)
         assertEquals("oslo-salary-2026-05-01", snapshot.salaryTableId)
         assertEquals(LocalDate.of(2026, 5, 1), snapshot.salaryTableEffectiveFrom)
         assertEquals("Oslo kommune lønnstabell fra 01.05.2026", snapshot.salaryTableSourceLabel)
+    }
+
+    @Test
+    fun legacyVersionOneSnapshotInfersCurrentTariffProvenance() {
+        val encoded =
+            "AAAAAQAAACQ0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQAAAATMjAyNi0wOC0yNVQxMToxNTozMAAAAAUwLjUuNQAAADQAAAAGMjAyNi4zAAAAFm9zbG8tc2FsYXJ5LTIwMjYtMDUtMDEAAAAKMjAyNi0wNS0wMQAAAChMw7hubnN0YWJlbGwgT3NsbyBrb21tdW5lIGZyYSAwMS4wNS4yMDI2AAAACUxlZ2FjeSB2MQAAABAyMDI2LTA4LTI1VDA3OjAwAAAAEDIwMjYtMDgtMjZUMjA6MDAAAAAMT1NMT19LT01NVU5FAAAAC1VOU1BFQ0lGSUVEAAAAGERPX05PVF9VU0VfTk9STUFMX1JPU1RFUgAAACAAAAAGNjE0NjAwAAAACkhPVVJTXzM1XzUAAAAIU1RBTkRBUkQBAAAAAAAAAAAAAAAABjMzMi45NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAEMC4wMAAAAAQwLjAwAAAABDAuMDAAAAAEMC4wMAAAAAAAAAAEMC4wMAAAAAQwLjAwAQAAAAAAAAAAAAAAAA=="
+
+        val decoded = FinalizedTripSnapshotCodec.decode(encoded)
+
+        assertEquals("Legacy v1", decoded.title)
+        assertEquals("oslo-salary-2026-05-01", decoded.salaryTableId)
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, decoded.tariffPackageId)
+        assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, decoded.tariffRateSetId)
     }
 
     private fun snapshot(

@@ -229,8 +229,10 @@ object TripPlanEngine {
         weekendProfile: WeekendProfile,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
+        rateSet: TariffRateSet = FerieturTariffRates.current,
     ): PreliminaryCalculation {
-        val hourlyRate = TariffMath.hourlyRate(annualSalary, weeklyBasis)
+        val tariffLabel = FerieturTariffs.requireById(rateSet.tariffPackageId).label
+        val hourlyRate = TariffMath.hourlyRate(annualSalary, weeklyBasis, rateSet)
         val blocks = projectRange(dates, plans)
         val activeBlocks = normalizedActiveBlocks(blocks)
         val restingBlocks = blocks.filter { it.kind == TimeKind.RESTING_NIGHT_WATCH }
@@ -269,7 +271,7 @@ object TripPlanEngine {
 
         val lines = mutableListOf<CalculationLine>()
         val payableActiveMinutes = payableActiveBlocks.sumOf(::durationMinutes)
-        val activeMultiplier = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) BigDecimal("1.50") else BigDecimal.ONE
+        val activeMultiplier = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) rateSet.chapter20ActiveMultiplier else BigDecimal.ONE
         if (payableActiveMinutes > 0) {
             val amount = moneyAmount(payForMinutes(hourlyRate, payableActiveMinutes).multiply(activeMultiplier))
             val breakdown = buildList {
@@ -288,19 +290,19 @@ object TripPlanEngine {
                     append(minutesLabel(payableActiveMinutes))
                     if (breakdown.isNotBlank() && payableTravelWithResponsibilityMinutes > 0) append(" ($breakdown)")
                     append(" × ${moneyRate(hourlyRate)}")
-                    if (activeMultiplier > BigDecimal.ONE) append(" × 1,50")
+                    if (activeMultiplier > BigDecimal.ONE) append(" × ${decimalLabel(activeMultiplier, 2)}")
                 },
                 amount = amount,
                 source = when {
-                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelWithResponsibilityMinutes > 0 -> "Dok. 25 2026–28, punkt 20.2 og 20.3"
-                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "Dok. 25 2026–28, punkt 20.2"
-                    else -> "Lønnstabellen + Dok. 25 2026–28, punkt 9.6"
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelWithResponsibilityMinutes > 0 -> "$tariffLabel, punkt 20.2 og 20.3"
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "$tariffLabel, punkt 20.2"
+                    else -> "Lønnstabellen + $tariffLabel, punkt 9.6"
                 },
                 explanation = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
                     buildString {
-                        append("I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag for arbeid som er forutsatt dekket gjennom ordinær lønn. Timer modellen klassifiserer som arbeid i tillegg til grunnturnusen beregnes her med timelønn pluss 50 prosent. Dok. 25 punkt 20.2 fastsetter at arbeidstid ut over ordinær arbeidstid etter kapittel 8 kompenseres med timelønn pluss 50 prosent.")
+                        append("I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag for arbeid som er forutsatt dekket gjennom ordinær lønn. Timer modellen klassifiserer som arbeid i tillegg til grunnturnusen beregnes her med timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent. Dok. 25 punkt 20.2 fastsetter at arbeidstid ut over ordinær arbeidstid etter kapittel 8 kompenseres med timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent.")
                         if (payableTravelWithResponsibilityMinutes > 0) append(" Reise med ansvar for beboeren er med i disse timene fordi reisetid med aktivt tilsyn regnes som arbeidstid etter punkt 20.3.")
-                        append(" Hvilken arbeidsplan og eventuell gjennomsnittsberegning som gjelder for ferieoppholdet må avklares med arbeidsgiver. På de samme minuttene som modellen behandler etter punkt 20.2, legger appen ikke til kveld-/nattillegg eller lørdags-/søndagstillegg fra kapittel 12. Punkt 12.1.1 gjelder ordinær tjeneste og sier uttrykkelig at kvelds-/nattillegget ikke utbetales for overtid; punkt 12.2.2 gjelder ordinær tjeneste og utelukker overtid. For særskilte høytidsdager bruker appen punkt 20.2 som den spesifikke ferieoppholdsregelen: kapittel 13 gjelder etter punkt 13.1 dersom ikke annet er fastsatt i tariffavtalen, mens punkt 20.2 fastsetter timelønn pluss 50 prosent for arbeidstid ut over ordinær arbeidstid under ferieoppholdet.")
+                        append(" Hvilken arbeidsplan og eventuell gjennomsnittsberegning som gjelder for ferieoppholdet må avklares med arbeidsgiver. På de samme minuttene som modellen behandler etter punkt 20.2, legger appen ikke til kveld-/nattillegg eller lørdags-/søndagstillegg fra kapittel 12. Punkt 12.1.1 gjelder ordinær tjeneste og sier uttrykkelig at kvelds-/nattillegget ikke utbetales for overtid; punkt 12.2.2 gjelder ordinær tjeneste og utelukker overtid. For særskilte høytidsdager bruker appen punkt 20.2 som den spesifikke ferieoppholdsregelen: kapittel 13 gjelder etter punkt 13.1 dersom ikke annet er fastsatt i tariffavtalen, mens punkt 20.2 fastsetter timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent for arbeidstid ut over ordinær arbeidstid under ferieoppholdet.")
                     }
                 } else {
                     "Aktivt arbeid beregnes med timelønnen som følger av lønnstrinnet og den valgte arbeidsuken. Grunnturnusen brukes ikke som sammenligningsgrunnlag i denne beregningsmåten. Arbeidsgiverforhold og betalingsscenario håndteres separat."
@@ -312,34 +314,34 @@ object TripPlanEngine {
 
         val payableRestingMinutes = payableRestingBlocks.sumOf(::durationMinutes)
         if (payableRestingMinutes > 0) {
-            val amount = moneyAmount(payForMinutes(hourlyRate, payableRestingMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP))
+            val amount = moneyAmount(payForMinutes(hourlyRate, payableRestingMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP))
             lines += CalculationLine(
                 id = "resting-night",
                 title = "Hvilende nattevakt",
-                detail = "${minutesLabel(payableRestingMinutes)} arbeidstid → ${oneThirdTimeLabel(payableRestingMinutes)} lønnsekvivalent",
+                detail = "${minutesLabel(payableRestingMinutes)} arbeidstid → ${passiveTimeLabel(payableRestingMinutes, rateSet)} lønnsekvivalent",
                 amount = amount,
-                source = "Dok. 25 2026–28, punkt 20.4",
-                explanation = "Hele den hvilende nattevakten teller som arbeidstid, men betalingen regnes i forholdet 1:3. En ni timers hvilende nattevakt gir derfor tre timers lønnsekvivalent. Aktivt arbeid under vakten beregnes på en egen linje."
+                source = "$tariffLabel, punkt 20.4",
+                explanation = "Hele den hvilende nattevakten teller som arbeidstid, men betalingen regnes i forholdet ${passiveRatioLabel(rateSet)}. Aktivt arbeid under vakten beregnes på en egen linje."
                 ,
                 evidence = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) outsideRestingEvidence else restingBlocks.map { evidence(it, "Hvilende nattevakt") },
             )
         }
 
         val restingEveningEvidence = payableRestingBlocks.flatMap { block ->
-            eligibleEveningNightSegments(block, nightWatch = true)
+            eligibleEveningNightSegments(block, nightWatch = true, rateSet = rateSet)
         }
         val restingEveningMinutes = restingEveningEvidence.sumOf { it.minutes }
         if (restingEveningMinutes > 0) {
-            val rate = TariffMath.eveningNightRate(hourlyRate)
-            val amount = moneyAmount(payForMinutes(rate, restingEveningMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP))
+            val rate = TariffMath.eveningNightRate(hourlyRate, rateSet)
+            val amount = moneyAmount(payForMinutes(rate, restingEveningMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP))
             lines += CalculationLine(
                 id = "resting-evening-night",
                 title = "Kveld- og nattillegg under hvilende nattevakt",
-                detail = "${minutesLabel(restingEveningMinutes)} hvilende × ⅓ × ${moneyRate(rate)}",
+                detail = "${minutesLabel(restingEveningMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
-                source = "Dok. 25 2026–28, punkt 8.9, 12.1.1 og 20.4",
-                explanation = "Kveld- og nattillegget under arbeid av passiv karakter betales også i forholdet 1:3. Det betyr at tillegget beregnes for en tredel av den registrerte hvilende tiden.",
-                evidence = restingEveningEvidence.map { it.copy(note = "${it.note} · tillegget betales 1:3") },
+                source = "$tariffLabel, punkt 8.9, 12.1.1 og 20.4",
+                explanation = "Kveld- og nattillegget under arbeid av passiv karakter betales også i forholdet ${passiveRatioLabel(rateSet)}. Det betyr at tillegget beregnes for ${passiveShareText(rateSet)} av den registrerte hvilende tiden.",
+                evidence = restingEveningEvidence.map { it.copy(note = "${it.note} · tillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
         }
@@ -347,16 +349,16 @@ object TripPlanEngine {
         val restingWeekendEvidence = payableRestingBlocks.flatMap { block -> weekendSegmentsExcludingHoliday(block, weeklyBasis) }
         val restingWeekendMinutes = restingWeekendEvidence.sumOf { it.minutes }
         if (restingWeekendMinutes > 0) {
-            val rate = TariffMath.weekendRate(hourlyRate, weekendProfile)
-            val amount = moneyAmount(payForMinutes(rate, restingWeekendMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP))
+            val rate = TariffMath.weekendRate(hourlyRate, weekendProfile, rateSet)
+            val amount = moneyAmount(payForMinutes(rate, restingWeekendMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP))
             lines += CalculationLine(
                 id = "resting-weekend",
                 title = "Lørdags- og søndagstillegg under hvilende nattevakt",
-                detail = "${minutesLabel(restingWeekendMinutes)} hvilende × ⅓ × ${moneyRate(rate)}",
+                detail = "${minutesLabel(restingWeekendMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
-                source = "Dok. 25 2026–28, punkt 8.9, 12.2.2 og 20.4",
-                explanation = "Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet 1:3. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.",
-                evidence = restingWeekendEvidence.map { it.copy(note = "${it.note} · tillegget betales 1:3") },
+                source = "$tariffLabel, punkt 8.9, 12.2.2 og 20.4",
+                explanation = "Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet ${passiveRatioLabel(rateSet)}. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.",
+                evidence = restingWeekendEvidence.map { it.copy(note = "${it.note} · tillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
         }
@@ -364,32 +366,32 @@ object TripPlanEngine {
         val restingHolidayEvidence = payableRestingBlocks.flatMap { block -> holidaySupplementSegments(block, weeklyBasis) }
         val restingHolidayMinutes = restingHolidayEvidence.sumOf { it.minutes }
         if (restingHolidayMinutes > 0) {
-            val rate = TariffMath.holidaySupplementRate(hourlyRate)
-            val amount = moneyAmount(payForMinutes(rate, restingHolidayMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP))
+            val rate = TariffMath.holidaySupplementRate(hourlyRate, rateSet)
+            val amount = moneyAmount(payForMinutes(rate, restingHolidayMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP))
             lines += CalculationLine(
                 id = "resting-holiday",
                 title = "Helge- og høytidsdagstillegg under hvilende nattevakt",
-                detail = "${minutesLabel(restingHolidayMinutes)} hvilende × ⅓ × ${moneyRate(rate)}",
+                detail = "${minutesLabel(restingHolidayMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
-                source = "Dok. 25 2026–28, punkt 8.9, 12.2.3 og 20.4",
-                explanation = "I helge- og høytidsperiodene i punkt 12.2.3 er tillegget 1 1/3 timelønn per time i tillegg til ordinær lønn. Under hvilende nattevakt betales også dette tillegget i forholdet 1:3.",
-                evidence = restingHolidayEvidence.map { it.copy(note = "${it.note} · høytidstillegget betales 1:3") },
+                source = "$tariffLabel, punkt 8.9, 12.2.3 og 20.4",
+                explanation = "I helge- og høytidsperiodene i punkt 12.2.3 er tillegget ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)} timelønn per time i tillegg til ordinær lønn. Under hvilende nattevakt betales også dette tillegget i forholdet ${passiveRatioLabel(rateSet)}.",
+                evidence = restingHolidayEvidence.map { it.copy(note = "${it.note} · høytidstillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
         }
 
-        val eveningEvidence = eveningNightEvidence(fundingMode, activeBlocks, roster, tripStart, tripEnd)
+        val eveningEvidence = eveningNightEvidence(fundingMode, activeBlocks, roster, tripStart, tripEnd, rateSet)
         val eveningMinutes = eveningEvidence.sumOf { it.minutes }
         if (eveningMinutes > 0) {
-            val rate = TariffMath.eveningNightRate(hourlyRate)
+            val rate = TariffMath.eveningNightRate(hourlyRate, rateSet)
             lines += CalculationLine(
                 id = "evening-night",
                 title = "Kveld- og nattillegg",
-                detail = "${minutesLabel(eveningMinutes)} × ${moneyRate(rate)} (40 %)",
+                detail = "${minutesLabel(eveningMinutes)} × ${moneyRate(rate)} (${percentLabel(rateSet.eveningNightFraction)} %)",
                 amount = moneyAmount(payForMinutes(rate, eveningMinutes)),
-                source = "Dok. 25 2026–28, punkt 12.1.1",
+                source = "$tariffLabel, punkt 12.1.1",
                 explanation = buildString {
-                    append("I relevant turnus får du 40 prosent tillegg for ordinært arbeid mellom kl. 17:00 og 06:00. Er perioden en nattevakt, fortsetter tillegget til vakten slutter, men ikke lenger enn til kl. 08:00. Tillegget gis ikke for overtid.")
+                    append("I relevant turnus får du ${percentLabel(rateSet.eveningNightFraction)} prosent tillegg for ordinært arbeid mellom kl. ${clockLabel(rateSet.eveningStart)} og ${clockLabel(rateSet.nightEnd)}. Er perioden en nattevakt, fortsetter tillegget til vakten slutter, men ikke lenger enn til kl. ${clockLabel(rateSet.nightWatchSupplementEnd)}. Tillegget gis ikke for overtid.")
                     if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
                         append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
                     } else {
@@ -406,15 +408,15 @@ object TripPlanEngine {
         val weekendEvidence = weekendEvidence(fundingMode, activeBlocks, roster, weeklyBasis, tripStart, tripEnd)
         val weekendMinutes = weekendEvidence.sumOf { it.minutes }
         if (weekendMinutes > 0) {
-            val rate = TariffMath.weekendRate(hourlyRate, weekendProfile)
+            val rate = TariffMath.weekendRate(hourlyRate, weekendProfile, rateSet)
             lines += CalculationLine(
                 id = "weekend",
                 title = "Lørdags- og søndagstillegg",
-                detail = "${minutesLabel(weekendMinutes)} × ${moneyRate(rate)} · ${weekendProfile.label}",
+                detail = "${minutesLabel(weekendMinutes)} × ${moneyRate(rate)} · ${rateSet.weekendRate(weekendProfile).label}",
                 amount = moneyAmount(payForMinutes(rate, weekendMinutes)),
-                source = "Dok. 25 2026–28, punkt 12.2.2",
+                source = "$tariffLabel, punkt 12.2.2",
                 explanation = buildString {
-                    append("Ordinært arbeid fra lørdag kl. 00:00 til søndag kl. 24:00 kan gi lørdags- og søndagstillegg. Timer som samtidig får helge- og høytidsdagstillegg etter punkt 12.2.3 tas ikke med her, fordi det tillegget er høyere enn 50 prosent. Appen bruker helgesatsen du har kontrollert mot lønnsslippen.")
+                    append("Ordinært arbeid fra lørdag kl. 00:00 til søndag kl. 24:00 kan gi lørdags- og søndagstillegg. Timer som samtidig får helge- og høytidsdagstillegg etter punkt 12.2.3 tas ikke med her, fordi høytidstillegget behandles som den høyere særregelen for disse timene. Appen bruker helgesatsen du har kontrollert mot lønnsslippen.")
                     if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
                         append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
                     } else {
@@ -431,15 +433,15 @@ object TripPlanEngine {
         val holidayEvidence = holidayEvidence(fundingMode, activeBlocks, roster, weeklyBasis, tripStart, tripEnd)
         val holidayMinutes = holidayEvidence.sumOf { it.minutes }
         if (holidayMinutes > 0) {
-            val rate = TariffMath.holidaySupplementRate(hourlyRate)
+            val rate = TariffMath.holidaySupplementRate(hourlyRate, rateSet)
             lines += CalculationLine(
                 id = "holiday",
                 title = "Helge- og høytidsdagstillegg",
                 detail = "${minutesLabel(holidayMinutes)} × ${moneyRate(rate)}",
                 amount = moneyAmount(payForMinutes(rate, holidayMinutes)),
-                source = "Dok. 25 2026–28, punkt 12.2.3",
+                source = "$tariffLabel, punkt 12.2.3",
                 explanation = buildString {
-                    append("Ved ordinær tjeneste i helge- og høytidsperiodene i punkt 12.2.3 får du et tillegg på 1 1/3 av timelønnen per arbeidet time. Satsen som vises i regnestykket er allerede dette tillegget, altså timelønn × 1 1/3. Den skal ikke ganges med 1 1/3 én gang til. Periodene er forskjellige for 33,6 timers uke og for 35,5/37,5 timer og tredelt turnus. Appen beregner datoene automatisk.")
+                    append("Ved ordinær tjeneste i helge- og høytidsperiodene i punkt 12.2.3 får du et tillegg på ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)} av timelønnen per arbeidet time. Satsen som vises i regnestykket er allerede dette tillegget, altså timelønn × ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)}. Den skal ikke ganges med samme faktor én gang til. Periodene er forskjellige for 33,6 timers uke og for 35,5/37,5 timer og tredelt turnus. Appen beregner datoene automatisk.")
                     if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
                         append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
                     } else {
@@ -457,36 +459,53 @@ object TripPlanEngine {
         // beyond ordinary hours during a chapter-20 holiday stay. Chapter-13 overtime
         // rules apply only where the tariff has not otherwise provided, cf. point 13.1.
 
-        val allowanceDays = stayAllowanceDays(tripStart, tripEnd)
+        val allowanceDays = stayAllowanceDays(tripStart, tripEnd, rateSet)
+        val stayRemainderMinutes = stayAllowanceRemainderMinutes(tripStart, tripEnd)
+        val exactStayThresholdOpen = stayRemainderMinutes == rateSet.stayAllowanceRemainderThresholdMinutes
         if (allowanceDays > 0) {
-            val allowance = moneyAmount(BigDecimal(allowanceDays).multiply(BigDecimal("110")))
+            val allowance = moneyAmount(BigDecimal(allowanceDays).multiply(rateSet.stayAllowancePerDay))
             lines += CalculationLine(
                 id = "stay-allowance",
                 title = "Døgngodtgjøring ved ferieopphold",
-                detail = "$allowanceDays døgn × 110 kr",
+                detail = "$allowanceDays døgn × ${decimalLabel(rateSet.stayAllowancePerDay)} kr",
                 amount = allowance,
-                source = "Dok. 25 2026–28, punkt 20.6",
-                explanation = "Ved ferieopphold som omfattes av kapittel 20 får arbeidstakeren 110 kroner per døgn i tillegg til lønnen. Et påbegynt døgn teller som et helt døgn når det varer mer enn seks timer. Kortere resttid gir ikke denne godtgjøringen."
-                ,
+                source = "$tariffLabel, punkt 20.6",
+                explanation = "Ved ferieopphold som omfattes av kapittel 20 får arbeidstakeren ${decimalLabel(rateSet.stayAllowancePerDay)} kroner per døgn i tillegg til lønnen. Et påbegynt døgn teller som et helt døgn når resttiden er mer enn ${durationWords(rateSet.stayAllowanceRemainderThresholdMinutes)}. Resttid under denne grensen gir ikke denne godtgjøringen. Nøyaktig ${durationWords(rateSet.stayAllowanceRemainderThresholdMinutes)} er ikke uttrykkelig regulert av ordlyden og behandles derfor som et åpent punkt.",
                 evidence = listOf(
                     CalculationEvidence(tripStart, tripEnd, Duration.between(tripStart, tripEnd).toMinutes(), "Reisens samlede varighet"),
                 ),
             )
         }
+        if (exactStayThresholdOpen) {
+            lines += CalculationLine(
+                id = "stay-allowance-exact-threshold-open",
+                title = "Døgngodtgjøring ved nøyaktig ${durationWords(rateSet.stayAllowanceRemainderThresholdMinutes)} må avklares",
+                detail = "Resttid ${minutesLabel(stayRemainderMinutes)} · mulig 1 døgn × ${decimalLabel(rateSet.stayAllowancePerDay)} kr",
+                amount = moneyAmount(rateSet.stayAllowancePerDay),
+                source = "$tariffLabel, punkt 20.6",
+                explanation = "Punkt 20.6 sier at resttid over ${durationWords(rateSet.stayAllowanceRemainderThresholdMinutes)} godtgjøres som fullt døgn, mens mindre enn ${durationWords(rateSet.stayAllowanceRemainderThresholdMinutes)} ikke godtgjøres. Ordlyden angir ikke uttrykkelig nøyaktig grenseverdi. Ferietur legger derfor ikke det mulige ekstradøgnet inn i kjent betalingsgrunnlag før dette er avklart.",
+                evidence = listOf(
+                    CalculationEvidence(tripEnd.minusMinutes(stayRemainderMinutes), tripEnd, stayRemainderMinutes, "Resttid etter hele døgn · nøyaktig tariffgrense"),
+                ),
+                certainty = CalculationCertainty.OPEN,
+                includedInKnownTotal = false,
+                paymentTreatment = PaymentTreatment.OPEN,
+            )
+        }
 
         if (activeEventBlocks.isNotEmpty()) {
-            val grouped = activeEventsPerRestingWatch(restingBlocks, activeEventBlocks)
+            val grouped = activeEventsPerRestingWatch(restingBlocks, activeEventBlocks, rateSet)
             val actualMinutes = grouped.sumOf { it.actualMinutes }
             val paidMinutes = grouped.sumOf { it.roundedMinutes }
             if (paidMinutes > 0) {
-                val activeRate = hourlyRate.multiply(BigDecimal("1.50")).setScale(2, RoundingMode.HALF_UP)
+                val activeRate = hourlyRate.multiply(rateSet.chapter20ActiveMultiplier).setScale(2, RoundingMode.HALF_UP)
                 lines += CalculationLine(
                     id = "active-on-resting",
                     title = "Aktivt arbeid under hvilende nattevakt",
                     detail = "${minutesLabel(actualMinutes)} registrert → ${minutesLabel(paidMinutes)} betalt × ${moneyRate(activeRate)}",
                     amount = moneyAmount(payForMinutes(activeRate, paidMinutes)),
-                    source = "Dok. 25 2026–28, punkt 20.4",
-                    explanation = "Den aktive tiden summeres for hver hvilende nattevakt og avrundes deretter til nærmeste halve time. 14 minutter eller mindre strykes. 15 minutter eller mer rundes opp til neste halve time. Den avrundede tiden betales med timelønn + 50 prosent.",
+                    source = "$tariffLabel, punkt 20.4",
+                    explanation = "Den aktive tiden summeres for hver hvilende nattevakt og avrundes deretter til nærmeste ${roundingUnitDefinite(rateSet.activeNightRoundingStepMinutes.toLong())}. ${rateSet.activeNightRoundUpRemainderAtMinutes - 1} minutter eller mindre strykes. ${rateSet.activeNightRoundUpRemainderAtMinutes} minutter eller mer rundes opp til neste ${roundingUnitDefinite(rateSet.activeNightRoundingStepMinutes.toLong())}. Den avrundede tiden betales med timelønn + ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent.",
                     evidence = grouped.flatMap { it.evidence },
                     certainty = CalculationCertainty.CONFIRMED,
                     includedInKnownTotal = true,
@@ -497,8 +516,8 @@ object TripPlanEngine {
                     title = "Aktivt arbeid under hvilende nattevakt",
                     detail = "${minutesLabel(actualMinutes)} registrert → 0 min betalt etter avrunding",
                     amount = moneyAmount(BigDecimal.ZERO),
-                    source = "Dok. 25 2026–28, punkt 20.4",
-                    explanation = "Den aktive tiden summeres for hver hvilende nattevakt. Når samlet aktiv tid på en vakt er 14 minutter eller mindre, strykes tiden etter avrundingsregelen i punkt 20.4.",
+                    source = "$tariffLabel, punkt 20.4",
+                    explanation = "Den aktive tiden summeres for hver hvilende nattevakt. Når samlet aktiv tid på en vakt er ${rateSet.activeNightRoundUpRemainderAtMinutes - 1} minutter eller mindre, strykes tiden etter avrundingsregelen i punkt 20.4.",
                     evidence = grouped.flatMap { it.evidence },
                     certainty = CalculationCertainty.CONFIRMED,
                     includedInKnownTotal = true,
@@ -517,8 +536,8 @@ object TripPlanEngine {
             val unresolvedNoticeOrdinaryTravelBlocks = mutableListOf<WorkBlock>()
 
             travelWithoutResponsibilityBlocks.forEach { block ->
-                val nightBlocks = travelNightBlocks(block)
-                val nonNightBlocks = travelNonNightBlocks(block)
+                val nightBlocks = travelNightBlocks(block, rateSet)
+                val nonNightBlocks = travelNonNightBlocks(block, rateSet)
                 val ordinaryParts = when (block.kind) {
                     TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> nonNightBlocks
                     TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP -> listOf(block)
@@ -553,7 +572,7 @@ object TripPlanEngine {
                     title = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) "Reise uten tilsynsansvar utenfor grunnturnusen" else "Reise uten tilsynsansvar",
                     detail = "${minutesLabel(payableOrdinaryMinutes)} × ${moneyRate(hourlyRate)}",
                     amount = amount,
-                    source = "Dok. 25 2026–28, punkt 18.4 og 20.3",
+                    source = "$tariffLabel, punkt 18.4 og 20.3",
                     explanation = buildString {
                         append("Punkt 20.3 viser til reisetidsreglene i punkt 18.4. Reisetid uten tilsynsansvar utenom ordinær arbeidstid godtgjøres med ordinær timelønn.")
                         if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
@@ -561,8 +580,8 @@ object TripPlanEngine {
                         } else {
                             append(" I denne separate turmodellen beregnes den registrerte ordinære reisetiden med ordinær timelønn.")
                         }
-                        append(" Varseltidspunktet registreres separat. Ved kort varsel beholder disse timene ordinær reisetidsbetaling, og appen legger i tillegg til overtidsprosenten for inntil to timer etter punkt 18.4 og kapittel 13. To-timersgrensen brukes én gang for den registrerte turen, slik at oppdeling i flere reiseperioder ikke ganger opp grensen.")
-                        if (travelWithoutResponsibilityBlocks.any { it.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP && travelNightBlocks(it).isNotEmpty() }) {
+                        append(" Varseltidspunktet registreres separat. Ved kort varsel beholder disse timene ordinær reisetidsbetaling, og appen legger i tillegg til overtidsprosenten for inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} etter punkt 18.4 og kapittel 13. Grensen brukes én gang for den registrerte turen, slik at oppdeling i flere reiseperioder ikke ganger den opp.")
+                        if (travelWithoutResponsibilityBlocks.any { it.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP && travelNightBlocks(it, rateSet).isNotEmpty() }) {
                             append(" For registrert nattreise der du har oppgitt at du ikke hadde tillatelse til å sove, brukes ordinær reisetidsbehandling også for nattdelen.")
                         }
                     },
@@ -577,8 +596,8 @@ object TripPlanEngine {
             // travel time. FERIETUR01 applies that cap once across the current trip, not once
             // per UI block, so splitting one journey into several travel blocks cannot multiply
             // the two-hour entitlement. Point 13.3 rounding is applied afterwards per rate band.
-            val shortNoticeCappedBlocks = takeFirstMinutes(shortNoticeOrdinaryTravelBlocks, 120L)
-            val shortNoticeOvertimeBands = overtimeSupplementBands(shortNoticeCappedBlocks, roster)
+            val shortNoticeCappedBlocks = takeFirstMinutes(shortNoticeOrdinaryTravelBlocks, rateSet.shortNoticeMaxMinutes)
+            val shortNoticeOvertimeBands = overtimeSupplementBands(shortNoticeCappedBlocks, roster, rateSet)
 
             if (unresolvedTravelNoticePayableMinutes > 0) {
                 // Show the monetary consequence of the unresolved fact without adding it to the
@@ -590,8 +609,9 @@ object TripPlanEngine {
                     acc.add(payForMinutes(hourlyRate.multiply(band.supplementFraction), band.paidMinutes))
                 }
                 val hypotheticalShortNoticeBands = overtimeSupplementBands(
-                    takeFirstMinutes(shortNoticeOrdinaryTravelBlocks + unresolvedNoticeOrdinaryTravelBlocks, 120L),
+                    takeFirstMinutes(shortNoticeOrdinaryTravelBlocks + unresolvedNoticeOrdinaryTravelBlocks, rateSet.shortNoticeMaxMinutes),
                     roster,
+                    rateSet,
                 )
                 val hypotheticalShortNoticeSupplement = hypotheticalShortNoticeBands.fold(BigDecimal.ZERO) { acc, band ->
                     acc.add(payForMinutes(hourlyRate.multiply(band.supplementFraction), band.paidMinutes))
@@ -610,8 +630,8 @@ object TripPlanEngine {
                     title = "Når du fikk vite om reisen må avklares",
                     detail = "${minutesLabel(unresolvedTravelNoticePayableMinutes)} reisetid utenfor ordinær arbeidstid · ordinær reisetidsbetaling er med$possibleText",
                     amount = possibleAmount,
-                    source = "Dok. 25 2026–28, punkt 18.4",
-                    explanation = "Ordinær timelønn for reisetiden er allerede med i betalingsgrunnlaget. Punkt 18.4 sier at dersom arbeidstakeren ikke fikk vite om reisen senest dagen i forveien, skal inntil to timer av reisetiden som kreves utført utenfor ordinær arbeidstid betales som overtid. Beløpet på denne åpne posten er derfor et mulig tillegg og er ikke inkludert i betalingsgrunnlaget. Oppgi om reisen var kjent senest dagen i forveien for å avklare posten.",
+                    source = "$tariffLabel, punkt 18.4",
+                    explanation = "Ordinær timelønn for reisetiden er allerede med i betalingsgrunnlaget. Punkt 18.4 sier at dersom arbeidstakeren ikke fikk vite om reisen senest dagen i forveien, skal inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} av reisetiden som kreves utført utenfor ordinær arbeidstid betales som overtid. Beløpet på denne åpne posten er derfor et mulig tillegg og er ikke inkludert i betalingsgrunnlaget. Oppgi om reisen var kjent senest dagen i forveien for å avklare posten.",
                     evidence = unresolvedNoticeOrdinaryTravelBlocks.map { evidence(it, "Varseltidspunkt for reisen er ikke avklart") },
                     certainty = CalculationCertainty.OPEN,
                     includedInKnownTotal = false,
@@ -632,8 +652,8 @@ object TripPlanEngine {
                     title = "Overtidstillegg ved kort varsel om reisen",
                     detail = "${minutesLabel(actualMinutes)} reisetid · ${minutesLabel(paidMinutes)} tilleggsgrunnlag · $rateLabels",
                     amount = moneyAmount(supplementAmount),
-                    source = "Dok. 25 2026–28, punkt 18.4, 13.2, 13.3 og 13.7.1",
-                    explanation = "Du har oppgitt at reisen ikke var kjent senest dagen i forveien. Punkt 18.4 gir da overtidsbetaling for inntil to timer av reisetiden som kreves utført utenfor ordinær arbeidstid. Den ordinære timelønnen for reisen står på reisetidslinjen; denne posten er overtidsdelen i tillegg. Beregningsmodellen bruker de første inntil to faktiske timene med kortvarslet ordinær reisetid i turen. Appen bruker 50 prosent mellom kl. 07:00 og 20:00 og 100 prosent mellom kl. 20:00 og 07:00, på søndager, offentlige helgedager og registrert ukentlig fridag. Overtidstillegget avrundes opp til påbegynt halvtime etter punkt 13.3.",
+                    source = "$tariffLabel, punkt 18.4, 13.2, 13.3 og 13.7.1",
+                    explanation = "Du har oppgitt at reisen ikke var kjent senest dagen i forveien. Punkt 18.4 gir da overtidsbetaling for inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} av reisetiden som kreves utført utenfor ordinær arbeidstid. Den ordinære timelønnen for reisen står på reisetidslinjen; denne posten er overtidsdelen i tillegg. Beregningsmodellen bruker de første inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} med kortvarslet ordinær reisetid i turen. Appen bruker ${percentLabel(rateSet.overtimeStandardFraction)} prosent mellom kl. ${clockLabel(rateSet.overtimeHighEnd)} og ${clockLabel(rateSet.overtimeHighStart)} og ${percentLabel(rateSet.overtimeHighFraction)} prosent mellom kl. ${clockLabel(rateSet.overtimeHighStart)} og ${clockLabel(rateSet.overtimeHighEnd)}, på søndager, offentlige helgedager og registrert ukentlig fridag. Overtidstillegget avrundes opp til påbegynt ${roundingUnitIndefinite(rateSet.overtimeRoundingStepMinutes)} etter punkt 13.3.",
                     evidence = shortNoticeOvertimeBands.map { band ->
                         CalculationEvidence(
                             start = band.start,
@@ -651,7 +671,7 @@ object TripPlanEngine {
                 if (specialBands.isNotEmpty()) {
                     val shortNoticeSpecial133PotentialMinutes = specialBands.sumOf { it.paidMinutes }
                     shortNoticeSpecial133PotentialAmount = specialBands.fold(BigDecimal.ZERO) { acc, band ->
-                        val potentialFraction = BigDecimal("1.3333333333").subtract(band.supplementFraction)
+                        val potentialFraction = rateSet.specialOvertimeFraction133.subtract(band.supplementFraction)
                         if (potentialFraction.signum() <= 0) acc else acc.add(payForMinutes(hourlyRate.multiply(potentialFraction), band.paidMinutes))
                     }
                     lines += CalculationLine(
@@ -659,8 +679,8 @@ object TripPlanEngine {
                         title = "Særskilt overtidsprosent på helge-/høytidsdag må avklares",
                         detail = "${minutesLabel(shortNoticeSpecial133PotentialMinutes)} tilleggsgrunnlag · mulig ekstra ${moneyRate(shortNoticeSpecial133PotentialAmount)}",
                         amount = moneyAmount(shortNoticeSpecial133PotentialAmount),
-                        source = "Dok. 25 2026–28, punkt 13.7.3 og 18.4",
-                        explanation = "Punkt 13.7.3 gir 133 1/3 prosent overtidstillegg til arbeidstakere som har ordinær tjeneste på søn- og helgedager på de særskilt opplistede dagene. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen. Den bekreftede overtidsbetalingen etter punkt 13.2 er allerede med; beløpet her viser bare mulig differanse dersom punkt 13.7.3 gjelder for arbeidstakeren.",
+                        source = "$tariffLabel, punkt 13.7.3 og 18.4",
+                        explanation = "Punkt 13.7.3 gir ${specialOvertimePercentLabel(rateSet)} prosent overtidstillegg til arbeidstakere som har ordinær tjeneste på søn- og helgedager på de særskilt opplistede dagene. Appen kan ikke fastslå denne personlige tariffstatusen bare fra turen. Den bekreftede overtidsbetalingen etter punkt 13.2 er allerede med; beløpet her viser bare mulig differanse dersom punkt 13.7.3 gjelder for arbeidstakeren.",
                         evidence = specialBands.map { band ->
                             CalculationEvidence(band.start, band.end, band.actualMinutes, "Kort varsel på særskilt dag · 13.7.3 må avklares")
                         },
@@ -676,28 +696,28 @@ object TripPlanEngine {
                 lines += CalculationLine(
                     id = "travel-passive-night",
                     title = "Nattreise med søvntillatelse · arbeid av passiv karakter",
-                    detail = "${minutesLabel(passiveNightMinutes)} arbeidstid → ${oneThirdTimeLabel(passiveNightMinutes)} lønnsekvivalent",
-                    amount = moneyAmount(payForMinutes(hourlyRate, passiveNightMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP)),
-                    source = "Dok. 25 2026–28, punkt 20.3 og 8.9",
-                    explanation = "Du har oppgitt at du hadde tillatelse til å sove under nattreisen. Reisetid mellom kl. 23:00 og 07:00 beregnes da som arbeid av passiv karakter. Tiden regnes som arbeidstid time for time, mens grunnbetalingen er 1/3 timelønn per time.",
+                    detail = "${minutesLabel(passiveNightMinutes)} arbeidstid → ${passiveTimeLabel(passiveNightMinutes, rateSet)} lønnsekvivalent",
+                    amount = moneyAmount(payForMinutes(hourlyRate, passiveNightMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP)),
+                    source = "$tariffLabel, punkt 20.3 og 8.9",
+                    explanation = "Du har oppgitt at du hadde tillatelse til å sove under nattreisen. Reisetid mellom kl. ${clockLabel(rateSet.travelSleepWindowStart)} og ${clockLabel(rateSet.travelSleepWindowEnd)} beregnes da som arbeid av passiv karakter. Tiden regnes som arbeidstid time for time, mens grunnbetalingen er ${passiveFractionLabel(rateSet).replace("⅓", "1/3")} timelønn per time.",
                     evidence = payablePassiveNightBlocks.map { evidence(it, "Nattreise · søvn tillatt · passiv karakter") },
                     certainty = CalculationCertainty.CONFIRMED,
                     includedInKnownTotal = true,
                     paymentTreatment = PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS,
                 )
 
-                val passiveEveningEvidence = payablePassiveNightBlocks.flatMap { eligibleEveningNightSegments(it, nightWatch = false) }
+                val passiveEveningEvidence = payablePassiveNightBlocks.flatMap { eligibleEveningNightSegments(it, nightWatch = false, rateSet = rateSet) }
                 val passiveEveningMinutes = passiveEveningEvidence.sumOf { it.minutes }
                 if (passiveEveningMinutes > 0) {
-                    val rate = TariffMath.eveningNightRate(hourlyRate)
+                    val rate = TariffMath.eveningNightRate(hourlyRate, rateSet)
                     lines += CalculationLine(
                         id = "travel-passive-evening-night",
                         title = "Kveld- og nattillegg under passiv nattreise",
-                        detail = "${minutesLabel(passiveEveningMinutes)} passiv reise × ⅓ × ${moneyRate(rate)}",
-                        amount = moneyAmount(payForMinutes(rate, passiveEveningMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP)),
-                        source = "Dok. 25 2026–28, punkt 8.9, 12.1.1 og 20.3",
-                        explanation = "Arbeid av passiv karakter får kveld- og nattillegg i forholdet 1:3. For reiseperioden brukes de ordinære tidsgrensene for kveld/natt; dette er ikke en nattevakt med forlengelse av tillegget til kl. 08:00.",
-                        evidence = passiveEveningEvidence.map { it.copy(note = "${it.note} · passiv reise · tillegget betales 1:3") },
+                        detail = "${minutesLabel(passiveEveningMinutes)} passiv reise × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
+                        amount = moneyAmount(payForMinutes(rate, passiveEveningMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP)),
+                        source = "$tariffLabel, punkt 8.9, 12.1.1 og 20.3",
+                        explanation = "Arbeid av passiv karakter får kveld- og nattillegg i forholdet ${passiveRatioLabel(rateSet)}. For reiseperioden brukes de ordinære tidsgrensene for kveld/natt; dette er ikke en nattevakt med forlengelse av tillegget til kl. ${clockLabel(rateSet.nightWatchSupplementEnd)}.",
+                        evidence = passiveEveningEvidence.map { it.copy(note = "${it.note} · passiv reise · tillegget betales ${passiveRatioLabel(rateSet)}") },
                         certainty = CalculationCertainty.CONFIRMED,
                     )
                 }
@@ -705,15 +725,15 @@ object TripPlanEngine {
                 val passiveWeekendEvidence = payablePassiveNightBlocks.flatMap { weekendSegmentsExcludingHoliday(it, weeklyBasis) }
                 val passiveWeekendMinutes = passiveWeekendEvidence.sumOf { it.minutes }
                 if (passiveWeekendMinutes > 0) {
-                    val rate = TariffMath.weekendRate(hourlyRate, weekendProfile)
+                    val rate = TariffMath.weekendRate(hourlyRate, weekendProfile, rateSet)
                     lines += CalculationLine(
                         id = "travel-passive-weekend",
                         title = "Lørdags- og søndagstillegg under passiv nattreise",
-                        detail = "${minutesLabel(passiveWeekendMinutes)} passiv reise × ⅓ × ${moneyRate(rate)}",
-                        amount = moneyAmount(payForMinutes(rate, passiveWeekendMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP)),
-                        source = "Dok. 25 2026–28, punkt 8.9, 12.2.2 og 20.3",
-                        explanation = "Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet 1:3. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.",
-                        evidence = passiveWeekendEvidence.map { it.copy(note = "${it.note} · passiv reise · tillegget betales 1:3") },
+                        detail = "${minutesLabel(passiveWeekendMinutes)} passiv reise × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
+                        amount = moneyAmount(payForMinutes(rate, passiveWeekendMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP)),
+                        source = "$tariffLabel, punkt 8.9, 12.2.2 og 20.3",
+                        explanation = "Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet ${passiveRatioLabel(rateSet)}. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.",
+                        evidence = passiveWeekendEvidence.map { it.copy(note = "${it.note} · passiv reise · tillegget betales ${passiveRatioLabel(rateSet)}") },
                         certainty = CalculationCertainty.CONFIRMED,
                     )
                 }
@@ -721,15 +741,15 @@ object TripPlanEngine {
                 val passiveHolidayEvidence = payablePassiveNightBlocks.flatMap { holidaySupplementSegments(it, weeklyBasis) }
                 val passiveHolidayMinutes = passiveHolidayEvidence.sumOf { it.minutes }
                 if (passiveHolidayMinutes > 0) {
-                    val rate = TariffMath.holidaySupplementRate(hourlyRate)
+                    val rate = TariffMath.holidaySupplementRate(hourlyRate, rateSet)
                     lines += CalculationLine(
                         id = "travel-passive-holiday",
                         title = "Helge- og høytidstillegg under passiv nattreise",
-                        detail = "${minutesLabel(passiveHolidayMinutes)} passiv reise × ⅓ × ${moneyRate(rate)}",
-                        amount = moneyAmount(payForMinutes(rate, passiveHolidayMinutes).divide(BigDecimal(3), 8, RoundingMode.HALF_UP)),
-                        source = "Dok. 25 2026–28, punkt 8.9, 12.2.3 og 20.3",
-                        explanation = "Helge- og høytidstillegg under arbeid av passiv karakter betales i forholdet 1:3.",
-                        evidence = passiveHolidayEvidence.map { it.copy(note = "${it.note} · passiv reise · høytidstillegget betales 1:3") },
+                        detail = "${minutesLabel(passiveHolidayMinutes)} passiv reise × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
+                        amount = moneyAmount(payForMinutes(rate, passiveHolidayMinutes).divide(BigDecimal(rateSet.passiveWorkDivisor), 8, RoundingMode.HALF_UP)),
+                        source = "$tariffLabel, punkt 8.9, 12.2.3 og 20.3",
+                        explanation = "Helge- og høytidstillegg under arbeid av passiv karakter betales i forholdet ${passiveRatioLabel(rateSet)}.",
+                        evidence = passiveHolidayEvidence.map { it.copy(note = "${it.note} · passiv reise · høytidstillegget betales ${passiveRatioLabel(rateSet)}") },
                         certainty = CalculationCertainty.CONFIRMED,
                     )
                 }
@@ -742,8 +762,8 @@ object TripPlanEngine {
                     title = "Søvntillatelse under nattreisen må avklares",
                     detail = "${minutesLabel(unresolvedSleepNightPayableMinutes)} nattreise · ikke beregnet",
                     amount = moneyAmount(BigDecimal.ZERO),
-                    source = "Dok. 25 2026–28, punkt 20.3",
-                    explanation = "Reisetid mellom kl. 23:00 og 07:00 skal beregnes som arbeid av passiv karakter når arbeidstakeren har tillatelse til å sove. Oppgi derfor om du hadde slik tillatelse. Inntil dette er avklart legges nattdelen ikke til betalingsgrunnlaget.",
+                    source = "$tariffLabel, punkt 20.3",
+                    explanation = "Reisetid mellom kl. ${clockLabel(rateSet.travelSleepWindowStart)} og ${clockLabel(rateSet.travelSleepWindowEnd)} skal beregnes som arbeid av passiv karakter når arbeidstakeren har tillatelse til å sove. Oppgi derfor om du hadde slik tillatelse. Inntil dette er avklart legges nattdelen ikke til betalingsgrunnlaget.",
                     evidence = payableUnresolvedNightBlocks.map { evidence(it, "Nattreise · søvntillatelse ikke avklart") },
                     certainty = CalculationCertainty.OPEN,
                     includedInKnownTotal = false,
@@ -759,7 +779,7 @@ object TripPlanEngine {
                 title = "Ansvar under reisen må avklares",
                 detail = "${minutesLabel(minutes)} registrert · ikke beregnet",
                 amount = moneyAmount(BigDecimal.ZERO),
-                source = "Dok. 25 2026–28, punkt 20.3",
+                source = "$tariffLabel, punkt 20.3",
                 explanation = "Du har registrert en reise der det er uklart hvem som hadde tilsynsansvaret. Det må avklares før appen kan behandle tiden som reise med eller uten tilsynsansvar.",
                 evidence = uncertainTravelBlocks.map { evidence(it, "Ansvar under reisen er ikke avklart") },
                 certainty = CalculationCertainty.OPEN,
@@ -775,6 +795,7 @@ object TripPlanEngine {
             if (unresolvedSleepNightPayableMinutes > 0) add("D25_20_3_SLEEP_PERMISSION")
             if (unresolvedTravelNoticePayableMinutes > 0) add("D25_18_4_NOTICE")
             if (shortNoticeSpecial133PotentialAmount.signum() > 0) add("D25_18_4_X13_7_3")
+            if (exactStayThresholdOpen) add("D25_20_6_EXACT_THRESHOLD")
         }
 
         val rosterUncoveredEvidence = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
@@ -950,6 +971,7 @@ object TripPlanEngine {
         blocks: List<WorkBlock>,
         unresolvedRuleCount: Int,
         roster: Map<LocalDate, String> = emptyMap(),
+        rateSet: TariffRateSet = FerieturTariffRates.current,
     ): List<ControlFinding> {
         val findings = mutableListOf<ControlFinding>()
         if (blocks.isEmpty()) {
@@ -971,7 +993,7 @@ object TripPlanEngine {
         // and passive work counts as worktime time-for-time even when it lies outside roster.
         val passiveNightTravel = blocks
             .filter { it.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED }
-            .flatMap(::travelNightBlocks)
+            .flatMap { block -> travelNightBlocks(block, rateSet) }
         val work = mergePeriods(directWorkBlocks + travelInOrdinaryWorkTime + passiveNightTravel)
         val totalMinutes = work.sumOf { ChronoUnit.MINUTES.between(it.first, it.second) }
         if (totalMinutes > 48 * 60) {
@@ -1012,9 +1034,9 @@ object TripPlanEngine {
             .filter { it.kind.isTravelWithoutResponsibility() }
             .flatMap { block ->
                 val ordinaryParts = when (block.kind) {
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> travelNonNightBlocks(block)
+                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> travelNonNightBlocks(block, rateSet)
                     TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP -> listOf(block)
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY -> travelNonNightBlocks(block)
+                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY -> travelNonNightBlocks(block, rateSet)
                     else -> emptyList()
                 }
                 if (roster.isEmpty()) ordinaryParts else ordinaryParts.flatMap { outsideWorkBlocks(it, roster) }
@@ -1030,25 +1052,25 @@ object TripPlanEngine {
             findings += ControlFinding(
                 FindingSeverity.OPEN,
                 "Når du fikk vite om reisen må avklares",
-                "Minst én relevant reise uten tilsynsansvar mangler svar på om reisen var kjent senest dagen i forveien. Ordinær reisetidsbetaling kan beregnes, men punkt 18.4 kan gi overtidstillegg for inntil to timer ved kort varsel.",
+                "Minst én relevant reise uten tilsynsansvar mangler svar på om reisen var kjent senest dagen i forveien. Ordinær reisetidsbetaling kan beregnes, men punkt 18.4 kan gi overtidstillegg for inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} ved kort varsel.",
             )
         }
         if (ordinaryTravelRelevantForNotice.any { it.travelNoticeStatus == TravelNoticeStatus.NOT_KNOWN_BY_PREVIOUS_DAY }) {
             findings += ControlFinding(
                 FindingSeverity.REVIEW,
                 "Kort varsel om reisen er registrert",
-                "Punkt 18.4 gir overtidsbetaling for inntil to timer reisetid som kreves utført utenfor ordinær arbeidstid når reisen ikke var kjent senest dagen i forveien. Beregningen viser overtidsdelen separat fra ordinær reisetidsbetaling.",
+                "Punkt 18.4 gir overtidsbetaling for inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} reisetid som kreves utført utenfor ordinær arbeidstid når reisen ikke var kjent senest dagen i forveien. Beregningen viser overtidsdelen separat fra ordinær reisetidsbetaling.",
             )
         }
         val unresolvedNightTravelMinutes = blocks
             .filter { it.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY }
-            .flatMap(::travelNightBlocks)
+            .flatMap { block -> travelNightBlocks(block, rateSet) }
             .sumOf(::durationMinutes)
         if (unresolvedNightTravelMinutes > 0) {
             findings += ControlFinding(
                 FindingSeverity.OPEN,
                 "Søvntillatelse under nattreisen må avklares",
-                "Du har registrert ${minutesLabel(unresolvedNightTravelMinutes)} reise uten tilsynsansvar mellom kl. 23:00 og 07:00 uten å angi om du hadde tillatelse til å sove. Punkt 20.3 sier at nattreisen skal beregnes som arbeid av passiv karakter når slik tillatelse forelå. Velg Ja, Nei eller Ikke avklart på reiseperioden.",
+                "Du har registrert ${minutesLabel(unresolvedNightTravelMinutes)} reise uten tilsynsansvar mellom kl. ${clockLabel(rateSet.travelSleepWindowStart)} og ${clockLabel(rateSet.travelSleepWindowEnd)} uten å angi om du hadde tillatelse til å sove. Punkt 20.3 sier at nattreisen skal beregnes som arbeid av passiv karakter når slik tillatelse forelå. Velg Ja, Nei eller Ikke avklart på reiseperioden.",
             )
         }
         val passiveNightTravelMinutes = passiveNightTravel.sumOf(::durationMinutes)
@@ -1056,7 +1078,7 @@ object TripPlanEngine {
             findings += ControlFinding(
                 FindingSeverity.REVIEW,
                 "Passiv nattreise teller som arbeidstid",
-                "Du har oppgitt søvntillatelse for ${minutesLabel(passiveNightTravelMinutes)} reise mellom kl. 23:00 og 07:00. Punkt 20.3 regner denne tiden som arbeid av passiv karakter: arbeidstid time for time og grunnbetaling i forholdet 1:3.",
+                "Du har oppgitt søvntillatelse for ${minutesLabel(passiveNightTravelMinutes)} reise mellom kl. ${clockLabel(rateSet.travelSleepWindowStart)} og ${clockLabel(rateSet.travelSleepWindowEnd)}. Punkt 20.3 regner denne tiden som arbeid av passiv karakter: arbeidstid time for time og grunnbetaling i forholdet ${passiveRatioLabel(rateSet)}.",
             )
         }
         if (unresolvedRuleCount > 0) {
@@ -1091,12 +1113,21 @@ object TripPlanEngine {
         return false
     }
 
-    fun stayAllowanceDays(start: LocalDateTime, end: LocalDateTime): Int {
+    fun stayAllowanceDays(
+        start: LocalDateTime,
+        end: LocalDateTime,
+        rateSet: TariffRateSet = FerieturTariffRates.current,
+    ): Int {
         require(end.isAfter(start))
         val minutes = Duration.between(start, end).toMinutes()
         val fullDays = minutes / (24 * 60)
         val remainder = minutes % (24 * 60)
-        return (fullDays + if (remainder > 6 * 60) 1 else 0).toInt()
+        return (fullDays + if (remainder > rateSet.stayAllowanceRemainderThresholdMinutes) 1 else 0).toInt()
+    }
+
+    fun stayAllowanceRemainderMinutes(start: LocalDateTime, end: LocalDateTime): Long {
+        require(end.isAfter(start))
+        return Duration.between(start, end).toMinutes() % (24 * 60)
     }
 
     fun buildDayAudits(
@@ -1227,21 +1258,22 @@ object TripPlanEngine {
     private fun overtimeSupplementBands(
         blocks: List<WorkBlock>,
         roster: Map<LocalDate, String>,
+        rateSet: TariffRateSet,
     ): List<OvertimeSupplementBand> {
         val bands = mutableListOf<OvertimeSupplementBand>()
         blocks.sortedBy { it.start }.forEach { block ->
             if (!block.end.isAfter(block.start)) return@forEach
             var cursor = block.start
             var groupStart = cursor
-            var groupFraction = overtimeSupplementFractionAt(cursor, roster)
+            var groupFraction = overtimeSupplementFractionAt(cursor, roster, rateSet)
             var groupSpecial133 = OsloHolidayCalendar.isOvertime133Date(cursor.toLocalDate())
             while (cursor.isBefore(block.end)) {
                 val next = minOf(cursor.plusMinutes(1), block.end)
                 if (next.isBefore(block.end)) {
-                    val nextFraction = overtimeSupplementFractionAt(next, roster)
+                    val nextFraction = overtimeSupplementFractionAt(next, roster, rateSet)
                     val nextSpecial133 = OsloHolidayCalendar.isOvertime133Date(next.toLocalDate())
                     if (nextFraction != groupFraction || nextSpecial133 != groupSpecial133) {
-                        bands += overtimeBand(groupStart, next, groupFraction, groupSpecial133)
+                        bands += overtimeBand(groupStart, next, groupFraction, groupSpecial133, rateSet)
                         groupStart = next
                         groupFraction = nextFraction
                         groupSpecial133 = nextSpecial133
@@ -1249,7 +1281,7 @@ object TripPlanEngine {
                 }
                 cursor = next
             }
-            if (block.end.isAfter(groupStart)) bands += overtimeBand(groupStart, block.end, groupFraction, groupSpecial133)
+            if (block.end.isAfter(groupStart)) bands += overtimeBand(groupStart, block.end, groupFraction, groupSpecial133, rateSet)
         }
         return bands
     }
@@ -1259,9 +1291,11 @@ object TripPlanEngine {
         end: LocalDateTime,
         fraction: BigDecimal,
         special133: Boolean,
+        rateSet: TariffRateSet,
     ): OvertimeSupplementBand {
         val actual = ChronoUnit.MINUTES.between(start, end)
-        val paid = ((actual + 29L) / 30L) * 30L
+        val step = rateSet.overtimeRoundingStepMinutes
+        val paid = ((actual + step - 1L) / step) * step
         val percent = fraction.multiply(BigDecimal(100)).stripTrailingZeros().toPlainString().replace('.', ',')
         return OvertimeSupplementBand(
             start = start,
@@ -1274,17 +1308,21 @@ object TripPlanEngine {
         )
     }
 
-    private fun overtimeSupplementFractionAt(moment: LocalDateTime, roster: Map<LocalDate, String>): BigDecimal {
+    private fun overtimeSupplementFractionAt(
+        moment: LocalDateTime,
+        roster: Map<LocalDate, String>,
+        rateSet: TariffRateSet,
+    ): BigDecimal {
         val date = moment.toLocalDate()
         val time = moment.toLocalTime()
-        if (isRegisteredWeeklyOffDay(date, roster)) return BigDecimal.ONE
-        if (date.dayOfWeek.value == 7 || OsloHolidayCalendar.isPublicHoliday(date)) return BigDecimal.ONE
-        if (time.isBefore(LocalTime.of(7, 0)) || !time.isBefore(LocalTime.of(20, 0))) return BigDecimal.ONE
+        if (isRegisteredWeeklyOffDay(date, roster)) return rateSet.overtimeHighFraction
+        if (date.dayOfWeek.value == 7 || OsloHolidayCalendar.isPublicHoliday(date)) return rateSet.overtimeHighFraction
+        if (time.isBefore(rateSet.overtimeHighEnd) || !time.isBefore(rateSet.overtimeHighStart)) return rateSet.overtimeHighFraction
         if (OsloHolidayCalendar.isDayBeforeSundayOrPublicHoliday(date)) {
             val ordinaryEnd = ordinaryWorkEndOnDate(date, roster)
-            if (ordinaryEnd != null && !moment.isBefore(ordinaryEnd)) return BigDecimal.ONE
+            if (ordinaryEnd != null && !moment.isBefore(ordinaryEnd)) return rateSet.overtimeHighFraction
         }
-        return BigDecimal("0.50")
+        return rateSet.overtimeStandardFraction
     }
 
     private fun isRegisteredWeeklyOffDay(date: LocalDate, roster: Map<LocalDate, String>): Boolean =
@@ -1301,11 +1339,11 @@ object TripPlanEngine {
         }.maxOrNull()
     }
 
-    private fun travelNightBlocks(block: WorkBlock): List<WorkBlock> =
-        travelBetween23And07Evidence(block).map { WorkBlock(it.start, it.end, block.kind, block.travelNoticeStatus) }
+    private fun travelNightBlocks(block: WorkBlock, rateSet: TariffRateSet): List<WorkBlock> =
+        travelBetween23And07Evidence(block, rateSet).map { WorkBlock(it.start, it.end, block.kind, block.travelNoticeStatus) }
 
-    private fun travelNonNightBlocks(block: WorkBlock): List<WorkBlock> {
-        val night = travelNightBlocks(block).map { it.start to it.end }
+    private fun travelNonNightBlocks(block: WorkBlock, rateSet: TariffRateSet): List<WorkBlock> {
+        val night = travelNightBlocks(block, rateSet).map { it.start to it.end }
         return subtractIntervals(block.start, block.end, night).map { (start, end) -> WorkBlock(start, end, block.kind, block.travelNoticeStatus) }
     }
 
@@ -1317,6 +1355,7 @@ object TripPlanEngine {
     private fun activeEventsPerRestingWatch(
         restingBlocks: List<WorkBlock>,
         eventBlocks: List<WorkBlock>,
+        rateSet: TariffRateSet,
     ): List<ActiveEventGroup> = restingBlocks.mapNotNull { watch ->
         val intersections = eventBlocks.mapNotNull { event ->
             intersection(watch.start, watch.end, event.start, event.end)?.let { (start, end) ->
@@ -1330,7 +1369,7 @@ object TripPlanEngine {
         }
         if (intersections.isEmpty()) return@mapNotNull null
         val actual = intersections.sumOf { it.minutes }
-        val rounded = TariffMath.roundActiveNightMinutes(actual.toInt()).toLong()
+        val rounded = TariffMath.roundActiveNightMinutes(actual.toInt(), rateSet).toLong()
         val summary = CalculationEvidence(
             start = watch.start,
             end = watch.end,
@@ -1340,8 +1379,61 @@ object TripPlanEngine {
         ActiveEventGroup(actual, rounded, listOf(summary) + intersections)
     }
 
-    private fun oneThirdTimeLabel(minutes: Long): String =
-        if (minutes % 3L == 0L) minutesLabel(minutes / 3L) else "${minutesLabel(minutes)} × ⅓"
+    private fun passiveTimeLabel(minutes: Long, rateSet: TariffRateSet): String {
+        val divisor = rateSet.passiveWorkDivisor.toLong()
+        return if (minutes % divisor == 0L) {
+            minutesLabel(minutes / divisor)
+        } else {
+            "${minutesLabel(minutes)} × ${passiveFractionLabel(rateSet)}"
+        }
+    }
+
+    private fun passiveRatioLabel(rateSet: TariffRateSet): String =
+        "1:${rateSet.passiveWorkDivisor}"
+
+    private fun passiveFractionLabel(rateSet: TariffRateSet): String =
+        if (rateSet.passiveWorkDivisor == 3) "⅓" else "1/${rateSet.passiveWorkDivisor}"
+
+    private fun passiveShareText(rateSet: TariffRateSet): String =
+        if (rateSet.passiveWorkDivisor == 3) "en tredel" else passiveFractionLabel(rateSet)
+
+    private fun percentLabel(fraction: BigDecimal): String =
+        fraction.multiply(BigDecimal(100)).stripTrailingZeros().toPlainString().replace('.', ',')
+
+    private fun decimalLabel(value: BigDecimal, scale: Int? = null): String {
+        val normalized = if (scale == null) value.stripTrailingZeros() else value.setScale(scale, RoundingMode.HALF_UP)
+        return normalized.toPlainString().replace('.', ',')
+    }
+
+    private fun clockLabel(value: LocalTime): String =
+        value.format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    private fun durationWords(minutes: Long): String = when (minutes) {
+        120L -> "to timer"
+        360L -> "seks timer"
+        else -> minutesLabel(minutes)
+    }
+
+    private fun roundingUnitDefinite(minutes: Long): String =
+        if (minutes == 30L) "halve time" else "$minutes minutter"
+
+    private fun roundingUnitIndefinite(minutes: Long): String =
+        if (minutes == 30L) "halvtime" else "$minutes-minuttersperiode"
+
+    private fun mixedFractionLabel(numerator: BigDecimal, denominator: BigDecimal): String {
+        val n = numerator.stripTrailingZeros().toBigIntegerExact()
+        val d = denominator.stripTrailingZeros().toBigIntegerExact()
+        val whole = n / d
+        val remainder = n % d
+        return when {
+            remainder.signum() == 0 -> whole.toString()
+            whole.signum() == 0 -> "$remainder/$d"
+            else -> "$whole $remainder/$d"
+        }
+    }
+
+    private fun specialOvertimePercentLabel(rateSet: TariffRateSet): String =
+        rateSet.specialOvertimePercentageLabel
 
     private fun eveningNightEvidence(
         fundingMode: FundingMode,
@@ -1349,9 +1441,10 @@ object TripPlanEngine {
         roster: Map<LocalDate, String>,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
+        rateSet: TariffRateSet,
     ): List<CalculationEvidence> {
         val candidateBlocks = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) rosterServiceBlocks(roster, tripStart, tripEnd) else activeBlocks
-        return candidateBlocks.flatMap { block -> eligibleEveningNightSegments(block, block.kind == TimeKind.ACTIVE_NIGHT_WATCH) }
+        return candidateBlocks.flatMap { block -> eligibleEveningNightSegments(block, block.kind == TimeKind.ACTIVE_NIGHT_WATCH, rateSet) }
     }
 
     private fun weekendEvidence(
@@ -1397,46 +1490,46 @@ object TripPlanEngine {
         }
     }.sortedBy { it.start }
 
-    private fun eligibleEveningNightSegments(block: WorkBlock, nightWatch: Boolean): List<CalculationEvidence> {
+    private fun eligibleEveningNightSegments(block: WorkBlock, nightWatch: Boolean, rateSet: TariffRateSet): List<CalculationEvidence> {
         if (nightWatch) {
-            val latest = LocalDateTime.of(block.end.toLocalDate(), LocalTime.of(8, 0))
+            val latest = LocalDateTime.of(block.end.toLocalDate(), rateSet.nightWatchSupplementEnd)
             val end = if (block.end.isAfter(latest)) latest else block.end
             return if (end.isAfter(block.start)) listOf(
-                CalculationEvidence(block.start, end, ChronoUnit.MINUTES.between(block.start, end), "Nattevakt · 40 % til vaktens slutt, senest 08:00"),
+                CalculationEvidence(block.start, end, ChronoUnit.MINUTES.between(block.start, end), "Nattevakt · ${percentLabel(rateSet.eveningNightFraction)} % til vaktens slutt, senest ${clockLabel(rateSet.nightWatchSupplementEnd)}"),
             ) else emptyList()
         }
         val results = mutableListOf<CalculationEvidence>()
         var date = block.start.toLocalDate().minusDays(1)
         val lastDate = block.end.toLocalDate()
         while (!date.isAfter(lastDate)) {
-            val eveningStart = LocalDateTime.of(date, LocalTime.of(17, 0))
+            val eveningStart = LocalDateTime.of(date, rateSet.eveningStart)
             val eveningEnd = LocalDateTime.of(date.plusDays(1), LocalTime.MIDNIGHT)
             intersection(block.start, block.end, eveningStart, eveningEnd)?.let { (start, end) ->
-                results += CalculationEvidence(start, end, ChronoUnit.MINUTES.between(start, end), "Kveld kl. 17:00–24:00")
+                results += CalculationEvidence(start, end, ChronoUnit.MINUTES.between(start, end), "Kveld kl. ${clockLabel(rateSet.eveningStart)}–24:00")
             }
             val nightStart = LocalDateTime.of(date, LocalTime.MIDNIGHT)
-            val nightEnd = LocalDateTime.of(date, LocalTime.of(6, 0))
+            val nightEnd = LocalDateTime.of(date, rateSet.nightEnd)
             intersection(block.start, block.end, nightStart, nightEnd)?.let { (start, end) ->
-                results += CalculationEvidence(start, end, ChronoUnit.MINUTES.between(start, end), "Natt kl. 00:00–06:00")
+                results += CalculationEvidence(start, end, ChronoUnit.MINUTES.between(start, end), "Natt kl. 00:00–${clockLabel(rateSet.nightEnd)}")
             }
             date = date.plusDays(1)
         }
         return results.distinctBy { Triple(it.start, it.end, it.note) }
     }
 
-    private fun travelBetween23And07Evidence(block: WorkBlock): List<CalculationEvidence> {
+    private fun travelBetween23And07Evidence(block: WorkBlock, rateSet: TariffRateSet): List<CalculationEvidence> {
         val results = mutableListOf<CalculationEvidence>()
         var date = block.start.toLocalDate().minusDays(1)
         val lastDate = block.end.toLocalDate()
         while (!date.isAfter(lastDate)) {
-            val nightStart = LocalDateTime.of(date, LocalTime.of(23, 0))
-            val nightEnd = LocalDateTime.of(date.plusDays(1), LocalTime.of(7, 0))
+            val nightStart = LocalDateTime.of(date, rateSet.travelSleepWindowStart)
+            val nightEnd = LocalDateTime.of(date.plusDays(1), rateSet.travelSleepWindowEnd)
             intersection(block.start, block.end, nightStart, nightEnd)?.let { (start, end) ->
                 results += CalculationEvidence(
                     start = start,
                     end = end,
                     minutes = ChronoUnit.MINUTES.between(start, end),
-                    note = "Reisetid kl. 23:00–07:00 · søvnregel må kontrolleres",
+                    note = "Reisetid kl. ${clockLabel(rateSet.travelSleepWindowStart)}–${clockLabel(rateSet.travelSleepWindowEnd)} · søvnregel må kontrolleres",
                 )
             }
             date = date.plusDays(1)

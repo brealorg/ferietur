@@ -28,6 +28,8 @@ data class FinalizedTripSnapshot(
     val appVersionName: String,
     val appVersionCode: Int,
     val rulesetVersion: String,
+    val tariffPackageId: String,
+    val tariffRateSetId: String,
     val salaryTableId: String,
     val salaryTableEffectiveFrom: LocalDate,
     val salaryTableSourceLabel: String,
@@ -50,7 +52,13 @@ data class FinalizedTripSnapshot(
     val findings: List<ControlFinding>,
     val unresolvedRules: List<DomainRule>,
 ) {
-    val ruleBasis: String get() = employerKind.ruleBasisLabel()
+    val ruleBasis: String get() = when (employerKind) {
+        EmployerKind.OSLO_KOMMUNE -> {
+            val tariffLabel = FerieturTariffs.packageForId(tariffPackageId)?.label ?: tariffPackageId
+            "Oslo kommune – $tariffLabel, kapittel 20"
+        }
+        else -> employerKind.ruleBasisLabel()
+    }
     val isRuleBasisConfirmed: Boolean get() = employerKind.isRuleBasisConfirmed()
     val isFrameworkComplete: Boolean get() = employerKind != EmployerKind.UNSPECIFIED
     val isConfirmedDocumentBasis: Boolean get() = isRuleBasisConfirmed && isFrameworkComplete
@@ -78,13 +86,29 @@ object FinalizedTripSnapshotBuilder {
         createdAt: LocalDateTime = LocalDateTime.now(),
         appVersionName: String = "test",
         appVersionCode: Int = 0,
-        rulesetVersion: String = FERIETUR_RULESET_VERSION,
+        tariffPackageId: String = FerieturTariffs.DOK25_2026_2028_ID,
+        tariffRateSetId: String = FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID,
+        rulesetVersion: String = FerieturTariffs.requireById(tariffPackageId).rulesetVersion,
         salaryTableId: String = "test-table",
         salaryTableEffectiveFrom: LocalDate = tripStart.toLocalDate(),
         salaryTableSourceLabel: String = "Test table",
     ): FinalizedTripSnapshot {
         require(TripPlanEngine.chapter20Applies(tripStart, tripEnd)) {
             "Dok. 25 kapittel 20 gjelder ikke dagsturer"
+        }
+        val tariffPackage = FerieturTariffs.requireById(tariffPackageId)
+        require(tariffPackage.coversRange(tripStart.toLocalDate(), tripEnd.toLocalDate())) {
+            "Tariffpakken $tariffPackageId dekker ikke hele turperioden."
+        }
+        require(tariffPackage.rulesetVersion == rulesetVersion) {
+            "Regelsett $rulesetVersion samsvarer ikke med tariffpakken $tariffPackageId."
+        }
+        val tariffRateSet = FerieturTariffRates.requireById(tariffRateSetId)
+        require(tariffRateSet.tariffPackageId == tariffPackageId) {
+            "Satssett $tariffRateSetId tilhører ikke tariffpakken $tariffPackageId."
+        }
+        require(tariffRateSet.coversRange(tripStart.toLocalDate(), tripEnd.toLocalDate())) {
+            "Satssett $tariffRateSetId dekker ikke hele turperioden."
         }
         TripDateRangePolicy.requireCompleteCoverage(
             dates = dates,
@@ -105,6 +129,7 @@ object FinalizedTripSnapshotBuilder {
             weekendProfile = weekendProfile,
             tripStart = tripStart,
             tripEnd = tripEnd,
+            rateSet = tariffRateSet,
         )
         val workBlocks = TripPlanEngine.projectRange(dates, plans)
         require(TripPlanEngine.outsideTripRangeBlocks(workBlocks, tripStart, tripEnd).isEmpty()) {
@@ -120,7 +145,7 @@ object FinalizedTripSnapshotBuilder {
             "Turnustid uten registrert arbeidsperiode må kontrolleres før ferdigstilling"
         }
         val unresolvedRules = FerieturRules.applicableUnresolvedRules(calculation)
-        val findings = TripPlanEngine.controlFindings(workBlocks, unresolvedRules.size, roster)
+        val findings = TripPlanEngine.controlFindings(workBlocks, unresolvedRules.size, roster, tariffRateSet)
         val rosterRows = if (rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
             dates.flatMap { date ->
                 RosterEntryCodec.decode(roster[date]).map { shift ->
@@ -144,6 +169,8 @@ object FinalizedTripSnapshotBuilder {
             appVersionName = appVersionName,
             appVersionCode = appVersionCode,
             rulesetVersion = rulesetVersion,
+            tariffPackageId = tariffPackageId,
+            tariffRateSetId = tariffRateSetId,
             salaryTableId = salaryTableId,
             salaryTableEffectiveFrom = salaryTableEffectiveFrom,
             salaryTableSourceLabel = salaryTableSourceLabel,
