@@ -528,3 +528,54 @@ runtime result into `PreliminaryCalculation`.
 
 The next slice must define the persisted calculation payload for a segmented
 runtime result before Compose can finalize multi-context trips safely.
+
+## A4A8 — persisted segmented calculation payload
+
+A4A8 upgrades finalized snapshot persistence from format v3 to v4. The tariff
+context list from A4A7 remains unchanged; the new part is that the calculation
+payload itself can now represent either the legacy single-context calculation
+or a genuinely segmented result.
+
+`FinalizedCalculationPayload` has two modes:
+
+- `PRELIMINARY`: stores the complete existing `PreliminaryCalculation` without
+  changing any field or monetary semantics;
+- `SEGMENTED_CONTEXTS`: stores the ordered scoped calculation lines from A4A5,
+  including each line's `SEGMENT_LOCAL`, `WHOLE_TRIP`, or
+  `PER_RESTING_WATCH` ownership plus `sliceIndex` / `watchSourceIndex`
+  provenance and the exact unresolved-rule ID set.
+
+The segmented payload derives known amount, payment basis, amount already
+covered by normal roster, and excluded/open amount directly from its frozen
+lines. It intentionally has `preliminaryOrNull = null`: Ferietur does not invent
+one synthetic hourly rate for a result that actually used multiple tariff or
+salary contexts.
+
+### Current UI/PDF compatibility boundary
+
+`FinalizedTripSnapshot.calculation` remains as a compatibility accessor for the
+current single-context UI/PDF code. It returns the stored preliminary
+calculation when one exists and fails closed for a segmented snapshot. Compose
+runtime is still not allowed to finalize a segmented result until those
+presentation surfaces are migrated to the common payload API.
+
+### Codec v4 and legacy reads
+
+New snapshots write format v4 and persist the tagged calculation payload.
+The codec still reads v1, v2, and v3:
+
+- v1/v2 keep synthesizing one frozen tariff context and wrap their existing
+  calculation as `PRELIMINARY`;
+- v3 keeps its explicit tariff-context list and wraps its existing
+  `PreliminaryCalculation` as `PRELIMINARY`;
+- v4 can round-trip either mode, including multiple scoped calculation lines
+  without any fake single hourly rate.
+
+`FinalizedCalculationPayload.fromRuntime(...)` is the lossless bridge from the
+A4A6 runtime result. A single runtime result preserves its exact
+`PreliminaryCalculation`; a segmented runtime result freezes A4A5's scoped line
+entries and unresolved-rule set.
+
+The outer `SavedTripDraft` schema remains version 6 because finalized snapshots
+are still stored as an opaque codec payload. UI, PDF, calculation money, and the
+runtime gateway are unchanged in this slice.

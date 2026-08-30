@@ -66,6 +66,99 @@ object FinalizedTariffContextSnapshots {
         calculation.provenance.map { FinalizedTariffContextSnapshot.fromRuntime(it) }
 }
 
+enum class FinalizedCalculationPayloadMode {
+    PRELIMINARY,
+    SEGMENTED_CONTEXTS,
+}
+
+data class FinalizedScopedCalculationLineSnapshot(
+    val scope: TariffCalculationLineScope,
+    val line: CalculationLine,
+    val sliceIndex: Int? = null,
+    val watchSourceIndex: Int? = null,
+) {
+    init {
+        when (scope) {
+            TariffCalculationLineScope.SEGMENT_LOCAL -> require(sliceIndex != null && watchSourceIndex == null)
+            TariffCalculationLineScope.WHOLE_TRIP -> require(sliceIndex == null && watchSourceIndex == null)
+            TariffCalculationLineScope.PER_RESTING_WATCH -> require(sliceIndex == null)
+        }
+    }
+
+    companion object {
+        fun fromRuntime(value: TariffScopedCalculationLine): FinalizedScopedCalculationLineSnapshot =
+            FinalizedScopedCalculationLineSnapshot(
+                scope = value.scope,
+                line = value.line,
+                sliceIndex = value.sliceIndex,
+                watchSourceIndex = value.watchSourceIndex,
+            )
+    }
+}
+
+sealed interface FinalizedCalculationPayload {
+    val mode: FinalizedCalculationPayloadMode
+    val lines: List<CalculationLine>
+    val knownAmount: BigDecimal
+    val paymentBasisAmount: BigDecimal
+    val alreadyCoveredByNormalRosterAmount: BigDecimal
+    val excludedKnownRuleAmount: BigDecimal
+    val applicableUnresolvedRuleIds: Set<String>
+    val preliminaryOrNull: PreliminaryCalculation?
+
+    data class Preliminary(
+        val calculation: PreliminaryCalculation,
+    ) : FinalizedCalculationPayload {
+        override val mode: FinalizedCalculationPayloadMode = FinalizedCalculationPayloadMode.PRELIMINARY
+        override val lines: List<CalculationLine> get() = calculation.lines
+        override val knownAmount: BigDecimal get() = calculation.knownAmount
+        override val paymentBasisAmount: BigDecimal get() = calculation.paymentBasisAmount
+        override val alreadyCoveredByNormalRosterAmount: BigDecimal
+            get() = calculation.alreadyCoveredByNormalRosterAmount
+        override val excludedKnownRuleAmount: BigDecimal get() = calculation.excludedKnownRuleAmount
+        override val applicableUnresolvedRuleIds: Set<String> get() = calculation.applicableUnresolvedRuleIds
+        override val preliminaryOrNull: PreliminaryCalculation get() = calculation
+    }
+
+    data class SegmentedContexts(
+        val lineEntries: List<FinalizedScopedCalculationLineSnapshot>,
+        override val applicableUnresolvedRuleIds: Set<String>,
+    ) : FinalizedCalculationPayload {
+        override val mode: FinalizedCalculationPayloadMode = FinalizedCalculationPayloadMode.SEGMENTED_CONTEXTS
+        override val lines: List<CalculationLine> get() = lineEntries.map { it.line }
+        override val knownAmount: BigDecimal get() = moneySum(lines.filter { it.includedInKnownTotal })
+        override val paymentBasisAmount: BigDecimal get() = moneySum(
+            lines.filter {
+                it.includedInKnownTotal && it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS
+            },
+        )
+        override val alreadyCoveredByNormalRosterAmount: BigDecimal get() = moneySum(
+            lines.filter {
+                it.includedInKnownTotal &&
+                    it.paymentTreatment == PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER
+            },
+        )
+        override val excludedKnownRuleAmount: BigDecimal get() = moneySum(lines.filterNot { it.includedInKnownTotal })
+        override val preliminaryOrNull: PreliminaryCalculation? = null
+
+        private fun moneySum(values: List<CalculationLine>): BigDecimal = values
+            .fold(BigDecimal.ZERO) { total, line -> total.add(line.amount) }
+            .setScale(2, java.math.RoundingMode.HALF_UP)
+    }
+
+    companion object {
+        fun fromRuntime(calculation: TariffRuntimeCalculation): FinalizedCalculationPayload = when (calculation) {
+            is TariffRuntimeCalculation.SingleContext -> Preliminary(calculation.preliminary)
+            is TariffRuntimeCalculation.SegmentedContexts -> SegmentedContexts(
+                lineEntries = calculation.segmented.lineEntries.map {
+                    FinalizedScopedCalculationLineSnapshot.fromRuntime(it)
+                },
+                applicableUnresolvedRuleIds = calculation.applicableUnresolvedRuleIds,
+            )
+        }
+    }
+}
+
 data class FinalizedTripSnapshot(
     val id: String,
     val createdAt: LocalDateTime,
@@ -92,7 +185,7 @@ data class FinalizedTripSnapshot(
     val rosterGapConfirmed: Boolean,
     val roster: List<RosterSnapshotRow>,
     val workBlocks: List<WorkBlock>,
-    val calculation: PreliminaryCalculation,
+    val calculationPayload: FinalizedCalculationPayload,
     val settlement: SettlementSnapshot,
     val findings: List<ControlFinding>,
     val unresolvedRules: List<DomainRule>,
@@ -132,8 +225,33 @@ data class FinalizedTripSnapshot(
         require(primary.annualSalary.compareTo(annualSalary) == 0) {
             "Primær årslønn samsvarer ikke med første tariffkontekst."
         }
+        if (calculationPayload is FinalizedCalculationPayload.SegmentedContexts) {
+            require(tariffContexts.size > 1) {
+                "Segmentert beregningspayload krever flere tariffkontekster."
+            }
+            calculationPayload.lineEntries.forEach { entry ->
+                if (entry.scope == TariffCalculationLineScope.SEGMENT_LOCAL) {
+                    val sliceIndex = requireNotNull(entry.sliceIndex)
+                    require(sliceIndex in tariffContexts.indices) {
+                        "Segmentert beregningslinje peker på ukjent tariffslice $sliceIndex."
+                    }
+                }
+            }
+        }
     }
 
+    /**
+     * Legacy single-context view used by the current UI/PDF path. A segmented
+     * snapshot deliberately has no synthetic hourly-rate calculation.
+     */
+    val calculation: PreliminaryCalculation
+        get() = requireNotNull(calculationPayload.preliminaryOrNull) {
+            "Segmentert ferdigstilt beregning har ingen entydig PreliminaryCalculation/timelønn."
+        }
+
+    val preliminaryCalculationOrNull: PreliminaryCalculation? get() = calculationPayload.preliminaryOrNull
+    val hasSegmentedCalculation: Boolean
+        get() = calculationPayload.mode == FinalizedCalculationPayloadMode.SEGMENTED_CONTEXTS
     val hasMultipleTariffContexts: Boolean get() = tariffContexts.size > 1
 
     val ruleBasis: String get() = when (employerKind) {
@@ -286,7 +404,7 @@ object FinalizedTripSnapshotBuilder {
             rosterGapConfirmed = rosterGapConfirmed,
             roster = rosterRows,
             workBlocks = workBlocks,
-            calculation = calculation,
+            calculationPayload = FinalizedCalculationPayload.Preliminary(calculation),
             settlement = settlement,
             findings = findings,
             unresolvedRules = unresolvedRules,

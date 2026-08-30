@@ -13,7 +13,8 @@ import java.util.Base64
 object FinalizedTripSnapshotCodec {
     private const val LEGACY_FORMAT_VERSION = 1
     private const val SINGLE_CONTEXT_FORMAT_VERSION = 2
-    private const val FORMAT_VERSION = 3
+    private const val MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION = 3
+    private const val FORMAT_VERSION = 4
     private const val LEGACY_UNKNOWN_TARIFF_PACKAGE_ID = "legacy-v1-unknown-tariff-package"
     private const val LEGACY_UNKNOWN_RATE_SET_ID = "legacy-v1-unknown-rate-set"
 
@@ -33,6 +34,7 @@ object FinalizedTripSnapshotCodec {
             require(
                 version == LEGACY_FORMAT_VERSION ||
                     version == SINGLE_CONTEXT_FORMAT_VERSION ||
+                    version == MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION ||
                     version == FORMAT_VERSION,
             ) {
                 "Unsupported finalized snapshot format: $version"
@@ -67,7 +69,7 @@ object FinalizedTripSnapshotCodec {
         writeBoolean(snapshot.rosterGapConfirmed)
         writeList(snapshot.roster) { writeRosterRow(it) }
         writeList(snapshot.workBlocks) { writeWorkBlock(it) }
-        writeCalculation(snapshot.calculation)
+        writeCalculationPayload(snapshot.calculationPayload)
         writeSettlement(snapshot.settlement)
         writeList(snapshot.findings) { writeFinding(it) }
         writeList(snapshot.unresolvedRules) { writeRule(it) }
@@ -91,7 +93,7 @@ object FinalizedTripSnapshotCodec {
         val tripStart = readDateTime()
         val tripEnd = readDateTime()
         val storedTariffContexts =
-            if (formatVersion >= FORMAT_VERSION) readList { readTariffContext() } else null
+            if (formatVersion >= MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION) readList { readTariffContext() } else null
         val employerKind: EmployerKind = enumValueOf(readString())
         val payingParty: PayingParty = enumValueOf(readString())
         val rosterComparisonMode: RosterComparisonMode = enumValueOf(readString())
@@ -103,7 +105,11 @@ object FinalizedTripSnapshotCodec {
         val rosterGapConfirmed = readBoolean()
         val roster = readList { readRosterRow() }
         val workBlocks = readList { readWorkBlock() }
-        val calculation = readCalculation()
+        val calculationPayload = if (formatVersion >= FORMAT_VERSION) {
+            readCalculationPayload()
+        } else {
+            FinalizedCalculationPayload.Preliminary(readCalculation())
+        }
         val settlement = readSettlement()
         val findings = readList { readFinding() }
         val unresolvedRules = readList { readRule() }
@@ -119,7 +125,9 @@ object FinalizedTripSnapshotCodec {
                 salaryTableEffectiveFrom = salaryTableEffectiveFrom,
                 salaryTableSourceLabel = salaryTableSourceLabel,
                 annualSalary = annualSalary,
-                hourlyRate = calculation.hourlyRate,
+                hourlyRate = requireNotNull(calculationPayload.preliminaryOrNull) {
+                    "Legacy finalized snapshot without explicit tariff contexts must contain PreliminaryCalculation."
+                }.hourlyRate,
             ),
         )
 
@@ -149,7 +157,7 @@ object FinalizedTripSnapshotCodec {
             rosterGapConfirmed = rosterGapConfirmed,
             roster = roster,
             workBlocks = workBlocks,
-            calculation = calculation,
+            calculationPayload = calculationPayload,
             settlement = settlement,
             findings = findings,
             unresolvedRules = unresolvedRules,
@@ -356,6 +364,49 @@ object FinalizedTripSnapshotCodec {
             alreadyCoveredSubtotal = readDecimal(),
             openSubtotal = readDecimal(),
         )
+
+    private fun DataOutputStream.writeScopedCalculationLine(value: FinalizedScopedCalculationLineSnapshot) {
+        writeString(value.scope.name)
+        writeBoolean(value.sliceIndex != null)
+        if (value.sliceIndex != null) writeInt(value.sliceIndex)
+        writeBoolean(value.watchSourceIndex != null)
+        if (value.watchSourceIndex != null) writeInt(value.watchSourceIndex)
+        writeCalculationLine(value.line)
+    }
+
+    private fun DataInputStream.readScopedCalculationLine(): FinalizedScopedCalculationLineSnapshot {
+        val scope: TariffCalculationLineScope = enumValueOf(readString())
+        val sliceIndex = if (readBoolean()) readInt() else null
+        val watchSourceIndex = if (readBoolean()) readInt() else null
+        return FinalizedScopedCalculationLineSnapshot(
+            scope = scope,
+            line = readCalculationLine(),
+            sliceIndex = sliceIndex,
+            watchSourceIndex = watchSourceIndex,
+        )
+    }
+
+    private fun DataOutputStream.writeCalculationPayload(value: FinalizedCalculationPayload) {
+        writeString(value.mode.name)
+        when (value) {
+            is FinalizedCalculationPayload.Preliminary -> writeCalculation(value.calculation)
+            is FinalizedCalculationPayload.SegmentedContexts -> {
+                writeList(value.lineEntries) { writeScopedCalculationLine(it) }
+                writeList(value.applicableUnresolvedRuleIds.sorted()) { writeString(it) }
+            }
+        }
+    }
+
+    private fun DataInputStream.readCalculationPayload(): FinalizedCalculationPayload =
+        when (val mode: FinalizedCalculationPayloadMode = enumValueOf(readString())) {
+            FinalizedCalculationPayloadMode.PRELIMINARY ->
+                FinalizedCalculationPayload.Preliminary(readCalculation())
+            FinalizedCalculationPayloadMode.SEGMENTED_CONTEXTS ->
+                FinalizedCalculationPayload.SegmentedContexts(
+                    lineEntries = readList { readScopedCalculationLine() },
+                    applicableUnresolvedRuleIds = readList { readString() }.toSet(),
+                )
+        }
 
     private fun DataOutputStream.writeCalculation(value: PreliminaryCalculation) {
         writeDecimal(value.hourlyRate)

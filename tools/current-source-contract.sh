@@ -256,6 +256,20 @@ req('legacySingleContext(' in snapshot_codec, 'legacy_v1_v2_context_synthesis_mi
 req('version == SINGLE_CONTEXT_FORMAT_VERSION' in snapshot_codec, 'snapshot_v2_read_compat_missing')
 req('version == LEGACY_FORMAT_VERSION' in snapshot_codec, 'snapshot_v1_read_compat_missing')
 print('CURRENT_MULTI_CONTEXT_SNAPSHOT_PROVENANCE_CONTRACT=PASS')
+# A4A8 segmented finalized calculation payload contract.
+req('sealed interface FinalizedCalculationPayload' in finalized, 'finalized_calculation_payload_missing')
+req('val calculationPayload: FinalizedCalculationPayload' in finalized, 'snapshot_calculation_payload_field_missing')
+req('fun fromRuntime(calculation: TariffRuntimeCalculation): FinalizedCalculationPayload' in finalized, 'runtime_to_snapshot_calculation_bridge_missing')
+req('FinalizedCalculationPayloadMode.SEGMENTED_CONTEXTS' in finalized, 'segmented_snapshot_calculation_mode_missing')
+req('override val preliminaryOrNull: PreliminaryCalculation? = null' in finalized, 'segmented_payload_invents_preliminary_calculation')
+req('FinalizedScopedCalculationLineSnapshot.fromRuntime' in finalized, 'scoped_line_snapshot_bridge_missing')
+req('writeCalculationPayload(snapshot.calculationPayload)' in snapshot_codec, 'snapshot_v4_calculation_payload_not_written')
+req('readCalculationPayload()' in snapshot_codec, 'snapshot_v4_calculation_payload_not_read')
+req('MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION = 3' in snapshot_codec, 'snapshot_v3_read_compat_marker_missing')
+req('private const val FORMAT_VERSION = 4' in snapshot_codec, 'snapshot_v4_write_marker_missing')
+req('FinalizedCalculationPayload.Preliminary(readCalculation())' in snapshot_codec, 'legacy_calculation_payload_synthesis_missing')
+req('writeList(value.lineEntries) { writeScopedCalculationLine(it) }' in snapshot_codec, 'segmented_scoped_lines_not_persisted')
+print('CURRENT_SEGMENTED_SNAPSHOT_CALCULATION_PAYLOAD_CONTRACT=PASS')
 
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')

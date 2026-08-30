@@ -30,7 +30,7 @@ class FinalizedTripSnapshotPersistenceTest {
     }
 
     @Test
-    fun finalizedSnapshotVersionThreeRoundTripsMultipleTariffContexts() {
+    fun finalizedSnapshotVersionFourRoundTripsMultipleTariffContexts() {
         val original = snapshot(
             id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             createdAt = LocalDateTime.of(2026, 8, 25, 12, 0, 0),
@@ -54,7 +54,7 @@ class FinalizedTripSnapshotPersistenceTest {
         val version = ByteBuffer.wrap(Base64.getDecoder().decode(encoded)).int
         val decoded = FinalizedTripSnapshotCodec.decode(encoded)
 
-        assertEquals(3, version)
+        assertEquals(4, version)
         assertEquals(snapshot, decoded)
         assertTrue(decoded.hasMultipleTariffContexts)
         assertEquals(listOf("oslo-salary-2026-05-01", "future-salary-table"), decoded.tariffContexts.map { it.salaryTableId })
@@ -76,6 +76,21 @@ class FinalizedTripSnapshotPersistenceTest {
         assertEquals(decoded.salaryTableId, context.salaryTableId)
         assertEquals(decoded.annualSalary, context.annualSalary)
         assertEquals(decoded.calculation.hourlyRate, context.hourlyRate)
+        assertEquals(FinalizedCalculationPayloadMode.PRELIMINARY, decoded.calculationPayload.mode)
+    }
+
+    @Test
+    fun legacyVersionThreeSnapshotRetainsPreliminaryPayloadAndFrozenTariffContext() {
+        val encoded =
+            "AAAAAwAAACQ0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQAAAATMjAyNi0wOC0yNVQxMToxNTozMAAAAAUwLjUuNQAAADQAAAAGMjAyNi4zAAAAFG9zbG8tZG9rMjUtMjAyNi0yMDI4AAAAIW9zbG8tZG9rMjUtMjAyNi0yMDI4LXJhdGVzLTIwMjYuMQAAABZvc2xvLXNhbGFyeS0yMDI2LTA1LTAxAAAACjIwMjYtMDUtMDEAAAAoTMO4bm5zdGFiZWxsIE9zbG8ga29tbXVuZSBmcmEgMDEuMDUuMjAyNgAAAAlMZWdhY3kgdjEAAAAQMjAyNi0wOC0yNVQwNzowMAAAABAyMDI2LTA4LTI2VDIwOjAwAAAAAQAAAAoyMDI2LTA4LTI1AAAACjIwMjYtMDgtMjYAAAAUb3Nsby1kb2syNS0yMDI2LTIwMjgAAAAGMjAyNi4zAAAAIW9zbG8tZG9rMjUtMjAyNi0yMDI4LXJhdGVzLTIwMjYuMQAAABZvc2xvLXNhbGFyeS0yMDI2LTA1LTAxAAAACjIwMjYtMDUtMDEAAAAoTMO4bm5zdGFiZWxsIE9zbG8ga29tbXVuZSBmcmEgMDEuMDUuMjAyNgAAAAY2MTQ2MDAAAAAGMzMyLjk0AAAADE9TTE9fS09NTVVORQAAAAtVTlNQRUNJRklFRAAAABhET19OT1RfVVNFX05PUk1BTF9ST1NURVIAAAAgAAAABjYxNDYwMAAAAApIT1VSU18zNV81AAAACFNUQU5EQVJEAQAAAAAAAAAAAAAAAAYzMzIuOTQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAABDAuMDAAAAAEMC4wMAAAAAQwLjAwAAAABDAuMDAAAAAAAAAABDAuMDAAAAAEMC4wMAEAAAAAAAAAAAAAAAA="
+
+        val decoded = FinalizedTripSnapshotCodec.decode(encoded)
+
+        assertEquals(FinalizedCalculationPayloadMode.PRELIMINARY, decoded.calculationPayload.mode)
+        assertEquals(1, decoded.tariffContexts.size)
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, decoded.tariffContexts.single().tariffPackageId)
+        assertEquals(OsloSalaryTable2026.tableId, decoded.tariffContexts.single().salaryTableId)
+        assertEquals(decoded.calculation.hourlyRate, decoded.tariffContexts.single().hourlyRate)
     }
 
     @Test
