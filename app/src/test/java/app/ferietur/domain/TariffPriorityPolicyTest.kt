@@ -27,5 +27,12 @@ class TariffPriorityPolicyTest {
         )
         assertFalse("D25_20_2_X12_13" in unresolved)
         assertFalse("D25_20_2_X13_7_3" in unresolved)
+        assertFalse("D25_8_9_X20" in unresolved)
+        assertEquals(
+            RuleStatus.WORKING_INTERPRETATION,
+            FerieturRules.rules.single {
+                it.id == "D25_8_9_X20"
+            }.status,
+        )
     }
 }

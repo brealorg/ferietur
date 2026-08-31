@@ -2,6 +2,7 @@ package app.ferietur.domain
 
 enum class RuleStatus {
     IMPLEMENTED,
+    WORKING_INTERPRETATION,
     UNRESOLVED,
     WARNING_ONLY,
 }
@@ -29,7 +30,7 @@ object FerieturRules {
         DomainRule("D25_20_6", "Døgngodtgjøring ved ferieopphold", "Dok. 25 2026–28, punkt 20.6", RuleStatus.IMPLEMENTED),
         DomainRule("D25_20_6_EXACT_THRESHOLD", "Nøyaktig seks timers resttid ved døgngodtgjøring", "Dok. 25 2026–28, punkt 20.6", RuleStatus.UNRESOLVED),
         DomainRule("D25_20_4_ACTIVE", "Aktivt arbeid under hvilende nattevakt", "Dok. 25 2026–28, punkt 20.4", RuleStatus.IMPLEMENTED),
-        DomainRule("D25_8_9_X20", "Kveld/natt og helgetillegg under hvilende nattevakt", "Dok. 25 2026–28, punkt 8.9, 12.1.1, 12.2.2 og 20.4", RuleStatus.IMPLEMENTED),
+        DomainRule("D25_8_9_X20", "Tillegg etter kapittel 12 ved arbeid av passiv karakter", "Dok. 25 2026–28, punkt 8.9, 12.1.1, 12.2.2, 12.2.3, 20.3 og 20.4", RuleStatus.WORKING_INTERPRETATION),
         DomainRule("D25_20_2_X12_13", "Kapittel 12-tillegg stables ikke på de samme timene som kompenseres etter punkt 20.2", "Dok. 25 2026–28, punkt 12.1.1, 12.2.2 og 20.2", RuleStatus.IMPLEMENTED),
         DomainRule("D25_20_2_X13_7_3", "Punkt 20.2 brukes som særregel for arbeidstid ut over ordinær arbeidstid under ferieopphold", "Dok. 25 2026–28, punkt 13.1, 13.7.3 og 20.2", RuleStatus.IMPLEMENTED),
         DomainRule("PAYMENT_PROPOSAL", "Betalingsforslaget holdes adskilt fra beregningen", "Lokal avtale om oppgjør", RuleStatus.IMPLEMENTED),
@@ -43,5 +44,39 @@ object FerieturRules {
         rules.filter { rule ->
             rule.status == RuleStatus.UNRESOLVED && rule.id in ruleIds
         }
+
+    private val workingInterpretationLineIdsByRule: Map<String, Set<String>> =
+        mapOf(
+            "D25_8_9_X20" to setOf(
+                "resting-evening-night",
+                "resting-weekend",
+                "resting-holiday",
+                "travel-passive-evening-night",
+                "travel-passive-weekend",
+                "travel-passive-holiday",
+            ),
+        )
+
+    /**
+     * Returns interpretations that Ferietur actually used in the monetary
+     * calculation, but which the app does not present as finally clarified.
+     *
+     * These are deliberately separate from [applicableUnresolvedRules]:
+     * working interpretations remain part of the calculated payment basis.
+     */
+    fun applicableWorkingInterpretationRules(
+        lines: List<CalculationLine>,
+    ): List<DomainRule> {
+        val lineIds = lines.mapTo(mutableSetOf()) { it.id }
+
+        return rules.filter { rule ->
+            rule.status == RuleStatus.WORKING_INTERPRETATION &&
+                workingInterpretationLineIdsByRule[
+                    rule.id
+                ].orEmpty().any { lineId ->
+                    lineId in lineIds
+                }
+        }
+    }
 }
 

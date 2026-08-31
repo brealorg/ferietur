@@ -947,3 +947,105 @@ then
 fi
 
 echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=PASS"
+
+# PILOT01-001
+#
+# D25_8_9_X20 is a working interpretation whose monetary result remains part
+# of the calculation. It must never be projected into the genuinely unresolved
+# rule set.
+if ! rg -q \
+  'WORKING_INTERPRETATION' \
+  app/src/main/java/app/ferietur/domain/Rules.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_STATUS_ENUM"
+  exit 1
+fi
+
+if ! rg -q \
+  'D25_8_9_X20.*RuleStatus\.WORKING_INTERPRETATION' \
+  app/src/main/java/app/ferietur/domain/Rules.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_RULE_STATUS"
+  exit 1
+fi
+
+if rg -q \
+  'add\("D25_8_9_X20"\)' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_SINGLE_CONTEXT_UNRESOLVED"
+  exit 1
+fi
+
+if rg -q \
+  '"(resting-evening-night|resting-weekend|resting-holiday|travel-passive-evening-night|travel-passive-weekend|travel-passive-holiday)" -> "D25_8_9_X20"' \
+  app/src/main/java/app/ferietur/domain/TariffSegmentedMonetaryCalculation.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_SEGMENTED_UNRESOLVED"
+  exit 1
+fi
+
+if ! rg -q \
+  'applicableWorkingInterpretationRules' \
+  app/src/main/java/app/ferietur/domain/Rules.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_APPLICABILITY_HELPER"
+  exit 1
+fi
+
+if ! rg -q \
+  'Lønnstabellen \+ \$tariffLabel, punkt 9\.6 og 20\.3' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_ACTIVE_TRAVEL_20_3"
+  exit 1
+fi
+
+if ! rg -q \
+  'Arbeidsfortolkninger som fortsatt avklares' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_PDF_SECTION"
+  exit 1
+fi
+
+if ! rg -q \
+  'allerede inkludert i betalingsgrunnlaget' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=FAIL_PDF_INCLUDED_TEXT"
+  exit 1
+fi
+
+echo "CURRENT_PILOT01_001_WORKING_INTERPRETATION_CONTRACT=PASS"
+
+# PILOT01-002
+#
+# salaryTableSourceLabel is provenance text and may already contain the
+# generic noun and its machine-formatted effective date. PDF presentation
+# must not print that raw label and then append the effective date again.
+if rg -Fq \
+  'w.summaryLine("Lønnstabell", "${context.salaryTableSourceLabel} · fra ${date(context.salaryTableEffectiveFrom)}")' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_002_SALARY_TABLE_PDF_CONTRACT=FAIL_RAW_DUPLICATING_LABEL"
+  exit 1
+fi
+
+if ! rg -Fq \
+  '.removePrefix("Lønnstabell ")' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_002_SALARY_TABLE_PDF_CONTRACT=FAIL_PREFIX_NORMALIZATION"
+  exit 1
+fi
+
+if ! rg -Fq \
+  '.substringBeforeLast(" fra ")' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_002_SALARY_TABLE_PDF_CONTRACT=FAIL_DATE_SUFFIX_NORMALIZATION"
+  exit 1
+fi
+
+echo "CURRENT_PILOT01_002_SALARY_TABLE_PDF_CONTRACT=PASS"

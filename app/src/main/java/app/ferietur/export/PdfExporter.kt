@@ -156,6 +156,12 @@ object PdfExporter {
             }
 
         val reviewFindings = s.findings.filter { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
+        val workingInterpretationRules =
+            app.ferietur.domain.FerieturRules
+                .applicableWorkingInterpretationRules(
+                    calculation.lines,
+                )
+
         w.h2("Status")
         w.statusRow("Lønnsopplysninger", if (s.payslipChecked) "Kontrollert mot lønnsslipp" else "Må kontrolleres", if (s.payslipChecked) PdfTone.OK else PdfTone.WARNING)
         if (calculation.rosterUncoveredMinutes > 0L) {
@@ -166,6 +172,13 @@ object PdfExporter {
             if (s.unresolvedRules.isEmpty()) "Ingen åpne regler som treffer denne turen" else "${s.unresolvedRules.size} ${if (s.unresolvedRules.size == 1) "regel" else "regler"} må avklares",
             if (s.unresolvedRules.isEmpty()) PdfTone.OK else PdfTone.WARNING,
         )
+        if (workingInterpretationRules.isNotEmpty()) {
+            w.statusRow(
+                "Fortolkning",
+                "${workingInterpretationRules.size} ${if (workingInterpretationRules.size == 1) "arbeidsfortolkning er" else "arbeidsfortolkninger er"} brukt i beløpet · fortsatt til avklaring",
+                PdfTone.INFO,
+            )
+        }
         w.statusRow(
             "Arbeidstid",
             if (reviewFindings.isEmpty()) "Ingen forhold markert" else "${reviewFindings.size} forhold bør vurderes",
@@ -382,6 +395,12 @@ object PdfExporter {
 
         w.footerMeta("Kontrollgrunnlag: arbeidsmiljøloven kapittel 10 og Dok. 25 punkt 20.2. Den konkrete arbeidstidsordningen kan avhenge av gjennomsnittsberegning og lokale avtaler.")
         w.space(4)
+        val workingInterpretationRules =
+            app.ferietur.domain.FerieturRules
+                .applicableWorkingInterpretationRules(
+                    s.presentation.lines,
+                )
+
         w.h2("Regler som fortsatt må avklares")
         if (s.unresolvedRules.isEmpty()) {
             w.statusRow("Beregning", "Ingen kjente åpne regler som treffer denne turen", PdfTone.OK)
@@ -403,6 +422,49 @@ object PdfExporter {
                 w.openRule(title, explanation, rule.source)
             }
         }
+
+        if (workingInterpretationRules.isNotEmpty()) {
+            w.space(4)
+            w.h2("Arbeidsfortolkninger som fortsatt avklares")
+
+            workingInterpretationRules.forEach { rule ->
+                val affectedAmount =
+                    when (rule.id) {
+                        "D25_8_9_X20" ->
+                            s.presentation.lines
+                                .filter { line ->
+                                    line.id in setOf(
+                                        "resting-evening-night",
+                                        "resting-weekend",
+                                        "resting-holiday",
+                                        "travel-passive-evening-night",
+                                        "travel-passive-weekend",
+                                        "travel-passive-holiday",
+                                    )
+                                }
+                                .fold(BigDecimal.ZERO) { total, line ->
+                                    total.add(line.amount)
+                                }
+
+                        else -> BigDecimal.ZERO
+                    }
+
+                val explanation =
+                    when (rule.id) {
+                        "D25_8_9_X20" ->
+                            "Ferietur bruker som arbeidsfortolkning at tillegg etter kapittel 12 under arbeid av passiv karakter beregnes i forholdet som følger av punkt 8.9. Spørsmålet om denne anvendelsen ved arbeid etter punkt 20.3 og 20.4 behandles ikke som endelig avklart i appen. De berørte postene utgjør ${money(affectedAmount)} i denne beregningen og er allerede inkludert i betalingsgrunnlaget."
+
+                        else ->
+                            "Ferietur bruker denne fortolkningen i det beregnede grunnlaget, men presenterer den ikke som endelig avklart."
+                    }
+
+                w.openRule(
+                    rule.title,
+                    explanation,
+                    rule.source,
+                )
+            }
+        }
     }
 
     private fun writeSources(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet) {
@@ -416,7 +478,14 @@ object PdfExporter {
         if (s.tariffContexts.size == 1) {
             val context = s.tariffContexts.single()
             // Preserve the qualified single-context PDF ordering exactly.
-            w.summaryLine("Lønnstabell", "${context.salaryTableSourceLabel} · fra ${date(context.salaryTableEffectiveFrom)}")
+            val salaryTableName =
+                context.salaryTableSourceLabel
+                    .removePrefix("Lønnstabell ")
+                    .substringBeforeLast(" fra ")
+            w.summaryLine(
+                "Lønnstabell",
+                "$salaryTableName · fra ${date(context.salaryTableEffectiveFrom)}",
+            )
             w.summaryLine("Lønnstrinn", s.salaryStep.toString())
             w.summaryLine("Årslønn", money(context.annualSalary))
             w.summaryLine("Full arbeidsuke", weeklyBasisLabel(s.weeklyBasis))

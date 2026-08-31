@@ -344,6 +344,7 @@ object TripPlanEngine {
                 source = when {
                     fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelWithResponsibilityMinutes > 0 -> "$tariffLabel, punkt 20.2 og 20.3"
                     fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "$tariffLabel, punkt 20.2"
+                    payableTravelWithResponsibilityMinutes > 0 -> "Lønnstabellen + $tariffLabel, punkt 9.6 og 20.3"
                     else -> "Lønnstabellen + $tariffLabel, punkt 9.6"
                 },
                 explanation = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {

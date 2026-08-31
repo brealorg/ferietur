@@ -78,3 +78,32 @@ Point 13.2 supplies the ordinary overtime rates: 50 percent during 07.00–20.00
 On dates listed in point 13.7.3, the app does not infer the employee-specific eligibility condition from the trip alone. It includes the confirmed ordinary overtime rate and exposes only a possible difference up to 133 1/3 percent as an open rule when that date is actually hit.
 
 For travel without supervision responsibility that overlaps 23.00–07.00, the work plan also records whether the employee had permission to sleep. **Yes** uses point 20.3 passive-character treatment: worktime time-for-time, base pay 1:3 and applicable passive-work supplements 1:3. **No** uses ordinary travel treatment under point 18.4. **Not clarified** keeps the affected night travel outside the payment basis and exposes an unresolved sleep-permission rule. Passive night minutes do not also receive the point-18.4 short-notice overtime treatment.
+
+## PILOT01-001 — passivtillegg som arbeidsfortolkning under avklaring
+
+PILOT01-001 skiller mellom reelle uavklarte beregningshull og
+arbeidsfortolkninger som Ferietur faktisk bruker i beregningen.
+
+`D25_8_9_X20` har status `WORKING_INTERPRETATION`.
+
+Ferietur bruker fortsatt 1:3-behandlingen av kapittel-12-tillegg ved arbeid av
+passiv karakter som arbeidsfortolkning. Beløpene er med i kjent
+betalingsgrunnlag og behandles derfor ikke som åpne beløpsposter.
+
+Fortolkningen vises når en eller flere av disse linjene faktisk forekommer:
+
+- `resting-evening-night`
+- `resting-weekend`
+- `resting-holiday`
+- `travel-passive-evening-night`
+- `travel-passive-weekend`
+- `travel-passive-holiday`
+
+Dette påvirker ikke `applicableUnresolvedRuleIds` eller snapshotets
+`unresolvedRules`.
+
+Kildebindingen dekker Dok. 25 punkt 8.9, 12.1.1, 12.2.2, 12.2.3, 20.3 og
+20.4.
+
+PILOT01-001 endrer ikke divisor, tilleggssatser, lønnstabell, tariffpakke,
+rate-set, regelsettversjon eller pengeberegning.
