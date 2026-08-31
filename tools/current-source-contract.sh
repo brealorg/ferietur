@@ -465,3 +465,168 @@ grep -Fq 'private fun drawFinalFooter(text: String)' "$PDF_EXPORTER" || {
 }
 
 echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=PASS"
+
+TARIFF_UPDATE_MANIFEST="app/src/main/java/app/ferietur/domain/TariffUpdateManifest.kt"
+TARIFF_UPDATE_TEST="app/src/test/java/app/ferietur/domain/TariffUpdateManifestTest.kt"
+
+[[ -f "$TARIFF_UPDATE_MANIFEST" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_UPDATE_TEST" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'enum class TariffUpdateActivation' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_ACTIVATION_MODEL"
+  exit 1
+}
+
+grep -Fq 'data class TariffUpdateManifest(' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_MANIFEST_MODEL"
+  exit 1
+}
+
+grep -Fq 'object TariffUpdateManifestValidator' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_VALIDATOR"
+  exit 1
+}
+
+grep -Fq 'class TariffUpdateManifestCatalog(' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_CONTROL_PLANE_CATALOG"
+  exit 1
+}
+
+grep -Fq 'it.activation == TariffUpdateActivation.ACTIVE' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_EXPLICIT_ACTIVE_FILTER"
+  exit 1
+}
+
+grep -Fq 'Regex("^[0-9a-f]{64}$")' "$TARIFF_UPDATE_MANIFEST" || {
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_SHA256_CONTRACT"
+  exit 1
+}
+
+if rg -q \
+  'TariffUpdateManifest|TariffUpdateActivation' \
+  app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+  app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+  app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt
+then
+  echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=FAIL_PREMATURE_RUNTIME_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_UPDATE_MANIFEST_CONTRACT=PASS"
+
+TARIFF_UPDATE_COMPONENTS="app/src/main/java/app/ferietur/domain/TariffUpdateComponentCoherence.kt"
+TARIFF_UPDATE_COMPONENT_TEST="app/src/test/java/app/ferietur/domain/TariffUpdateComponentCoherenceTest.kt"
+
+[[ -f "$TARIFF_UPDATE_COMPONENTS" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_UPDATE_COMPONENT_TEST" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'class TariffUpdateComponentRegistry(' "$TARIFF_UPDATE_COMPONENTS" || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_REGISTRY"
+  exit 1
+}
+
+grep -Fq 'object TariffUpdateComponentCoherenceValidator' "$TARIFF_UPDATE_COMPONENTS" || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_VALIDATOR"
+  exit 1
+}
+
+grep -Fq 'object FerieturTariffUpdateComponents' "$TARIFF_UPDATE_COMPONENTS" || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_CURRENT_COMPONENT_MIRROR"
+  exit 1
+}
+
+grep -Fq 'COMPONENT_PACKAGE_MISMATCH' "$TARIFF_UPDATE_COMPONENTS" || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_PACKAGE_OWNERSHIP_GATE"
+  exit 1
+}
+
+grep -Fq 'COMPONENT_DOES_NOT_COVER_MANIFEST_WINDOW' "$TARIFF_UPDATE_COMPONENTS" || {
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_EFFECTIVE_WINDOW_GATE"
+  exit 1
+}
+
+if rg -q \
+  'TariffUpdateComponentRegistry|TariffUpdateComponentCoherenceValidator|FerieturTariffUpdateComponents' \
+  app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+  app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+  app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt
+then
+  echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=FAIL_PREMATURE_RUNTIME_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_UPDATE_COMPONENT_COHERENCE_CONTRACT=PASS"
+
+TARIFF_UPDATE_QUALIFICATION="app/src/main/java/app/ferietur/domain/TariffUpdateQualification.kt"
+TARIFF_UPDATE_QUALIFICATION_TEST="app/src/test/java/app/ferietur/domain/TariffUpdateQualificationTest.kt"
+
+[[ -f "$TARIFF_UPDATE_QUALIFICATION" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_UPDATE_QUALIFICATION_TEST" ]] || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'object TariffUpdateQualifiedActivationGate' \
+  "$TARIFF_UPDATE_QUALIFICATION" || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_GATE"
+  exit 1
+}
+
+grep -Fq 'TariffUpdateManifestValidator' \
+  "$TARIFF_UPDATE_QUALIFICATION" || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_A5A1_COMPOSITION"
+  exit 1
+}
+
+grep -Fq 'TariffUpdateComponentCoherenceValidator' \
+  "$TARIFF_UPDATE_QUALIFICATION" || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_A5A2_COMPOSITION"
+  exit 1
+}
+
+grep -Fq 'manifest.activation !=' \
+  "$TARIFF_UPDATE_QUALIFICATION" || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_ACTIVE_GATE"
+  exit 1
+}
+
+grep -Fq 'TariffUpdateActivation.ACTIVE' \
+  "$TARIFF_UPDATE_QUALIFICATION" || {
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_ACTIVE_STATE"
+  exit 1
+}
+
+if rg -q \
+  'TariffUpdateQualifiedActivationGate|TariffUpdateQualificationResult' \
+  app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+  app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+  app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt
+then
+  echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=FAIL_PREMATURE_RUNTIME_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=PASS"

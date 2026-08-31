@@ -675,3 +675,92 @@ create a metadata-only trailing page.
 
 Short-PDF ordering, calculation formulas, runtime segmentation, snapshot v4 and
 Compose calculation flow are unchanged.
+
+## A5A1 – tariff update manifest and activation contract
+
+A5 introduces a control-plane lifecycle for future tariff and salary updates.
+The first slice deliberately does not change runtime calculation catalogs.
+
+A tariff update is not synonymous with a new tariff package. For example, the
+Dok. 25 2026–28 agreement package remains effective beyond the currently
+verified Oslo salary table window. A later salary table may therefore target
+the existing tariff package while adding only a new immutable salary-table
+component.
+
+`TariffUpdateManifest` records:
+
+- stable update identity;
+- target tariff-package identity and ruleset version;
+- effective window;
+- immutable component IDs affected by the update;
+- exact source-document identity, publication date and SHA-256 fingerprint;
+- explicit source-to-component bindings;
+- verification state;
+- explicit `CANDIDATE` or `ACTIVE` lifecycle state.
+
+An ACTIVE manifest is invalid unless every component has explicit source
+provenance, source fingerprints are canonical SHA-256 values and verification
+confirms that the source hashes were checked.
+
+`TariffUpdateManifestCatalog` provides an explicit activation boundary:
+candidate manifests remain visible to the update workflow but cannot be
+returned through active lookup.
+
+A5A1 is intentionally not wired into `FerieturTariffResolver`,
+`FerieturTariffs`, `FerieturTariffRates` or `OsloSalaryTables`. Runtime
+activation and component-to-catalog coherence are separate later gates.
+
+No calculation formula, tariff value, salary value, snapshot format, PDF or UI
+behavior changes in A5A1.
+
+## A5A2 – component coherence validation
+
+A5A2 adds a second fail-closed layer to the tariff-update control plane.
+
+A structurally valid manifest is not sufficient for activation. Every referenced
+immutable component must also exist in a known component registry, belong to
+the manifest's target tariff package and cover the manifest's effective window.
+
+The update component registry models tariff packages, rulesets, rate sets,
+salary tables and rule-source bindings as typed immutable identities.
+
+The current runtime catalogs are mirrored read-only into
+`FerieturTariffUpdateComponents.currentRuntime`. This mirror does not alter
+`FerieturTariffResolver` or make candidate components available to calculation.
+
+The coherence validator rejects:
+
+- unknown target tariff packages;
+- ruleset-version mismatch;
+- manifest periods outside the target agreement;
+- unknown component IDs;
+- components belonging to another tariff package;
+- components that do not cover the full manifest window.
+
+The registry itself also refuses components whose effective period lies outside
+their owning tariff package.
+
+This preserves the distinction between "known to the update workflow" and
+"available to runtime".
+
+## A5A3 – qualified activation gate
+
+A5A3 combines the two independent update-control layers into one final
+qualification decision.
+
+A manifest is qualified for a later runtime-registration step only when:
+
+1. it is explicitly marked `ACTIVE`;
+2. A5A1 structural, provenance and source-hash validation passes;
+3. A5A2 component identity, package ownership and effective-window coherence
+   passes.
+
+The result is typed as either `Qualified` or `Rejected`. Rejected results retain
+the exact A5A1/A5A2 failure categories.
+
+`Qualified` deliberately means only "eligible for later runtime registration".
+A5A3 does not mutate `FerieturTariffs`, `FerieturTariffRates`,
+`OsloSalaryTables`, `FerieturTariffResolver` or the calculation runtime.
+
+This preserves a hard boundary between approval of update material and actual
+availability to live calculations.
