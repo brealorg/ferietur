@@ -764,3 +764,63 @@ A5A3 does not mutate `FerieturTariffs`, `FerieturTariffRates`,
 
 This preserves a hard boundary between approval of update material and actual
 availability to live calculations.
+
+## A5A4 – runtime registration dry-run
+
+A5A4 adds an explicit add-only dry-run between A5A3 qualification and any
+future change to live runtime catalogs.
+
+A qualified component is classified as either `ADD` or `ALREADY_PRESENT`.
+Reusing an existing immutable kind/ID with different metadata is rejected.
+
+The projected post-registration component set is validated before mutation for:
+
+- tariff-package overlap and gaps;
+- rate-set overlap and gaps inside a tariff package;
+- salary-table overlap and gaps inside a tariff package;
+- incomplete registration of a completely new tariff package.
+
+A new tariff package must arrive together with package, ruleset, rate set,
+salary table and tariff rule-source bindings.
+
+A contiguous salary-only update inside an existing package is explicitly
+supported. This is the expected update shape for a future salary table during
+the existing Dok. 25 2026–28 agreement period.
+
+A5A4 still performs no live runtime mutation.
+
+## A5A5 – isolated typed runtime catalog snapshot
+
+A5A5 materializes an approved A5A4 dry-run into a fully typed runtime catalog
+snapshot without connecting it to the live resolver.
+
+The update workflow now distinguishes immutable metadata from the actual typed
+runtime payload:
+
+- `TariffPackage`;
+- ruleset/package payload;
+- `TariffRateSet`;
+- `SalaryTablePeriod`;
+- tariff `RuleSourceBinding` payloads.
+
+Every `ADD` action in the A5A4 plan must have exactly one matching typed
+payload. The typed payload must regenerate the exact immutable component
+metadata approved by the dry-run. Missing, duplicate, unplanned or mismatching
+payloads fail closed.
+
+The projected typed component set must also match A5A4
+`projectedComponents` exactly before a snapshot can be constructed.
+
+The snapshot exposes isolated date resolution for tariff package, rate set,
+salary table and annual salary.
+
+A synthetic boundary test proves:
+
+- 30 April 2027 resolves the existing salary table and annual salary 614600;
+- 1 May 2027 resolves a synthetic next salary table and annual salary 624600;
+- both dates remain in the same Dok. 25 package and rate set;
+- the global `OsloSalaryTables` catalog remains unchanged and still does not
+  support 1 May 2027.
+
+A5A5 therefore validates future runtime behavior without activating future data
+in the application.

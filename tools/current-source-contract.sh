@@ -630,3 +630,129 @@ then
 fi
 
 echo "CURRENT_TARIFF_UPDATE_QUALIFICATION_CONTRACT=PASS"
+
+TARIFF_RUNTIME_REGISTRATION_PLAN="app/src/main/java/app/ferietur/domain/TariffRuntimeRegistrationPlan.kt"
+TARIFF_RUNTIME_REGISTRATION_PLAN_TEST="app/src/test/java/app/ferietur/domain/TariffRuntimeRegistrationPlanTest.kt"
+
+[[ -f "$TARIFF_RUNTIME_REGISTRATION_PLAN" ]] || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_RUNTIME_REGISTRATION_PLAN_TEST" ]] || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'object TariffRuntimeRegistrationPlanner' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_PLANNER"
+  exit 1
+}
+
+grep -Fq 'IMMUTABLE_COMPONENT_REDEFINITION' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_IMMUTABLE_GATE"
+  exit 1
+}
+
+grep -Fq 'COMPONENT_PERIOD_OVERLAP' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_OVERLAP_GATE"
+  exit 1
+}
+
+grep -Fq 'COMPONENT_PERIOD_GAP' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_GAP_GATE"
+  exit 1
+}
+
+grep -Fq 'NEW_PACKAGE_INCOMPLETE' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_NEW_PACKAGE_GATE"
+  exit 1
+}
+
+grep -Fq 'val projectedComponents: List<TariffUpdateRegisteredComponent>' "$TARIFF_RUNTIME_REGISTRATION_PLAN" || {
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_PROJECTED_SNAPSHOT"
+  exit 1
+}
+
+if rg -q \
+  'TariffRuntimeRegistrationPlanner|TariffRuntimeRegistrationPlanResult' \
+  app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+  app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+  app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt
+then
+  echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=FAIL_PREMATURE_RUNTIME_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_RUNTIME_REGISTRATION_PLAN_CONTRACT=PASS"
+
+TARIFF_RUNTIME_CATALOG_SNAPSHOT="app/src/main/java/app/ferietur/domain/TariffRuntimeCatalogSnapshot.kt"
+TARIFF_RUNTIME_CATALOG_SNAPSHOT_TEST="app/src/test/java/app/ferietur/domain/TariffRuntimeCatalogSnapshotTest.kt"
+
+[[ -f "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" ]] || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_RUNTIME_CATALOG_SNAPSHOT_TEST" ]] || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'sealed interface TariffRuntimeComponentPayload' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_TYPED_PAYLOAD"
+  exit 1
+}
+
+grep -Fq 'class TariffRuntimeCatalogSnapshot internal constructor' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_ISOLATED_SNAPSHOT"
+  exit 1
+}
+
+grep -Fq 'object TariffRuntimeCatalogSnapshotMaterializer' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_MATERIALIZER"
+  exit 1
+}
+
+grep -Fq 'MISSING_ADDITION_PAYLOAD' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_MISSING_PAYLOAD_GATE"
+  exit 1
+}
+
+grep -Fq 'PAYLOAD_METADATA_MISMATCH' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_METADATA_GATE"
+  exit 1
+}
+
+grep -Fq 'PROJECTED_COMPONENT_SET_MISMATCH' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_PROJECTED_SET_GATE"
+  exit 1
+}
+
+grep -Fq 'fun resolveDate(' \
+  "$TARIFF_RUNTIME_CATALOG_SNAPSHOT" || {
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_DATE_RESOLUTION"
+  exit 1
+}
+
+if rg -q \
+  'TariffRuntimeCatalogSnapshot|TariffRuntimeCatalogSnapshotMaterializer' \
+  app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
+  app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
+  app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt
+then
+  echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=FAIL_PREMATURE_LIVE_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=PASS"
