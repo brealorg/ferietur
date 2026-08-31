@@ -160,6 +160,15 @@ class TariffRuntimeCatalogSnapshot internal constructor(
             date,
         )
 
+    fun annualSalaryForTable(
+        step: Int,
+        tableId: String,
+    ): BigDecimal? =
+        salaryTableCatalog.annualSalaryForTable(
+            step,
+            tableId,
+        )
+
     fun resolveDate(
         salaryStep: Int,
         date: LocalDate,

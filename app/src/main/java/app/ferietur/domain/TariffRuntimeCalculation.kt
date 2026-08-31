@@ -217,6 +217,111 @@ object FerieturTariffRuntimeCalculator {
     }
 
     /**
+     * Explicit catalog-injected runtime path.
+     *
+     * Used only for deterministic tariff-update qualification/tooling.
+     * The ordinary [calculate] production entrypoint above remains unchanged.
+     */
+    fun calculateWithCatalog(
+        catalog: TariffRuntimeCatalogView,
+        fundingMode: FundingMode,
+        dates: List<LocalDate>,
+        roster: Map<LocalDate, String>,
+        plans: Map<LocalDate, List<PlannedBlock>>,
+        salaryStep: Int,
+        weeklyBasis: WeeklyBasis,
+        weekendProfile: WeekendProfile,
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+    ): TariffRuntimeCalculationResult {
+        if (!tripEnd.isAfter(tripStart)) {
+            return failure(
+                TariffRuntimeCalculationFailureReason.INVALID_TRIP_RANGE,
+                "Turens sluttid må være etter starttid.",
+                tripStart.toLocalDate(),
+            )
+        }
+        if (!TripPlanEngine.chapter20Applies(tripStart, tripEnd)) {
+            return failure(
+                TariffRuntimeCalculationFailureReason.CHAPTER20_NOT_APPLICABLE,
+                "Dok. 25 kapittel 20 gjelder ikke dagsturer i Ferieturs beregningsmodell.",
+                tripStart.toLocalDate(),
+            )
+        }
+
+        try {
+            TripDateRangePolicy.requireCompleteCoverage(
+                dates = dates,
+                start = tripStart.toLocalDate(),
+                end = tripEnd.toLocalDate(),
+            )
+        } catch (error: IllegalArgumentException) {
+            return failure(
+                TariffRuntimeCalculationFailureReason.DATE_COVERAGE_MISMATCH,
+                error.message ?: "Turens datoliste dekker ikke hele registrerte periode.",
+                tripStart.toLocalDate(),
+            )
+        }
+
+        val workBlocks = TripPlanEngine.projectRange(dates, plans)
+        val outside = TripPlanEngine.outsideTripRangeBlocks(workBlocks, tripStart, tripEnd)
+        if (outside.isNotEmpty()) {
+            return failure(
+                TariffRuntimeCalculationFailureReason.WORK_BLOCK_OUTSIDE_TRIP,
+                "Arbeidsplanen inneholder ${outside.size} intervall utenfor turperioden. Ferietur klipper ikke slike feil bort automatisk.",
+                outside.first().start.toLocalDate(),
+            )
+        }
+        if (TripPlanEngine.hasUnintendedOverlap(workBlocks)) {
+            return failure(
+                TariffRuntimeCalculationFailureReason.WORK_BLOCK_OVERLAP,
+                "Arbeidsplanen inneholder overlappende perioder som ikke er en tillatt hvilende-vakt/aktiv-hendelse-kombinasjon.",
+            )
+        }
+
+        val segmentation =
+            TariffCatalogResolverAdapter(catalog)
+                .planSegments(tripStart, tripEnd)
+        if (segmentation is TariffSegmentationResult.Failure) {
+            return TariffRuntimeCalculationResult.Failure(
+                reason = TariffRuntimeCalculationFailureReason.SEGMENTATION_FAILED,
+                detail = segmentation.detail,
+                date = segmentation.date,
+                segmentationReason = segmentation.reason,
+            )
+        }
+
+        val planResult =
+            TariffCalculationSliceBuilder(
+                annualSalaryForTable =
+                    catalog::annualSalaryForTable,
+            ).build(
+            segmentation = segmentation as TariffSegmentationResult.Success,
+            salaryStep = salaryStep,
+            weeklyBasis = weeklyBasis,
+            tripStart = tripStart,
+            tripEnd = tripEnd,
+            workBlocks = workBlocks,
+        )
+        if (planResult is TariffCalculationPlanResult.Failure) {
+            return TariffRuntimeCalculationResult.Failure(
+                reason = TariffRuntimeCalculationFailureReason.SLICE_PLAN_FAILED,
+                detail = planResult.detail,
+                date = planResult.date,
+                slicePlanReason = planResult.reason,
+            )
+        }
+
+        return calculatePlan(
+            plan = (planResult as TariffCalculationPlanResult.Success).plan,
+            fundingMode = fundingMode,
+            dates = dates,
+            roster = roster,
+            weekendProfile = weekendProfile,
+        )
+    }
+
+    /**
      * Executes an already verified slice plan. Public for deterministic domain
      * qualification and for future import/migration tooling; app runtime should
      * normally enter through [calculate].

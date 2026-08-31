@@ -28,6 +28,11 @@ interface TariffRuntimeCatalogView {
         salaryStep: Int,
         date: LocalDate,
     ): BigDecimal?
+
+    fun annualSalaryForTable(
+        salaryStep: Int,
+        tableId: String,
+    ): BigDecimal?
 }
 
 /**
@@ -65,6 +70,15 @@ object FerieturGlobalRuntimeCatalogView :
             salaryStep,
             date,
         )
+
+    override fun annualSalaryForTable(
+        salaryStep: Int,
+        tableId: String,
+    ): BigDecimal? =
+        OsloSalaryTables.annualSalaryForTable(
+            salaryStep,
+            tableId,
+        )
 }
 
 /**
@@ -100,6 +114,15 @@ class TariffRuntimeCatalogSnapshotView(
         snapshot.annualSalaryForDate(
             salaryStep,
             date,
+        )
+
+    override fun annualSalaryForTable(
+        salaryStep: Int,
+        tableId: String,
+    ): BigDecimal? =
+        snapshot.annualSalaryForTable(
+            salaryStep,
+            tableId,
         )
 }
 

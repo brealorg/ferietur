@@ -893,3 +893,50 @@ The half-open midnight boundary is also locked:
 
 A5A7 establishes the production delegation seam without activating future
 catalog data.
+
+## A5A8 – final injected runtime qualification path
+
+A5A8 completes TARIFFCORE01 without changing the ordinary production
+calculation path.
+
+`TariffCalculationSliceBuilder` already had constructor injection for salary
+lookup by immutable salary-table ID. A5A8 therefore reuses that existing
+boundary rather than altering the slice calculation implementation.
+
+`TariffRuntimeCatalogView` and the isolated typed snapshot now expose the same
+salary-table-ID operation.
+
+`FerieturTariffRuntimeCalculator.calculateWithCatalog(...)` is an explicit
+qualification/tooling entrypoint using:
+
+- `TariffCatalogResolverAdapter(catalog)` for effective-date segmentation;
+- `TariffCalculationSliceBuilder(catalog::annualSalaryForTable)` for the exact
+  frozen salary table selected by each segment.
+
+The normal `calculate(...)` production implementation remains unchanged and
+continues to use `FerieturTariffResolver` and
+`FerieturTariffCalculationSlices`.
+
+End-to-end qualification proves an isolated calculation spanning 30 April /
+1 May 2027 uses annual salary 614600 before the boundary and synthetic 624600
+after it, while retaining the same Dok. 25 package and tariff rate set.
+
+The global production catalog still has no verified salary table for 1 May
+2027 and therefore continues to fail closed there.
+
+No synthetic salary value is present in main application source.
+
+## TARIFFCORE01 – complete
+
+Future verified tariff maintenance is now:
+
+official source
+→ immutable component
+→ source fingerprint and verification
+→ coherence/qualification
+→ add-only registration dry-run
+→ isolated typed catalog
+→ resolver/runtime boundary tests
+→ new Ferietur release.
+
+Remote or dynamic tariff activation is deliberately outside TARIFFCORE01.

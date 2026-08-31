@@ -813,16 +813,13 @@ grep -Fq 'TariffSegmentPlanner(' \
   exit 1
 }
 
-# A5A7 intentionally wires the qualified adapter into TariffResolution using
-# FerieturGlobalRuntimeCatalogView. The remaining hard boundary is that neither
-# the runtime calculator nor TripPlanEngine may consume the injectable catalog
-# view yet.
+# A5A8 deliberately exposes the injectable catalog view to the runtime
+# orchestration gateway. TripPlanEngine itself remains catalog agnostic.
 if rg -q \
   'TariffCatalogResolverAdapter|TariffRuntimeCatalogView|FerieturGlobalRuntimeCatalogView|TariffRuntimeCatalogSnapshotView' \
-  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt \
   app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
 then
-  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_PREMATURE_CALCULATOR_WIRING"
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_PREMATURE_ENGINE_WIRING"
   exit 1
 fi
 
@@ -867,3 +864,86 @@ grep -Fq \
 }
 
 echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=PASS"
+
+TARIFF_RUNTIME_INJECTION_TEST="app/src/test/java/app/ferietur/domain/TariffRuntimeCatalogInjectionTest.kt"
+
+[[ -f "$TARIFF_RUNTIME_INJECTION_TEST" ]] || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_TEST"
+  exit 1
+}
+
+grep -Fq 'fun calculateWithCatalog(' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_ENTRYPOINT"
+  exit 1
+}
+
+grep -Fq 'catalog: TariffRuntimeCatalogView' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_CATALOG_PARAM"
+  exit 1
+}
+
+grep -Fq 'TariffCatalogResolverAdapter(catalog)' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_RESOLVER"
+  exit 1
+}
+
+grep -Fq 'catalog::annualSalaryForTable' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_SALARY_PROVIDER"
+  exit 1
+}
+
+grep -Fq 'fun annualSalaryForTable(' \
+  app/src/main/java/app/ferietur/domain/TariffCatalogResolverAdapter.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_VIEW_TABLE_LOOKUP"
+  exit 1
+}
+
+grep -Fq 'fun annualSalaryForTable(' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCatalogSnapshot.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_SNAPSHOT_TABLE_LOOKUP"
+  exit 1
+}
+
+grep -Fq \
+  'val segmentation = FerieturTariffResolver.planSegments(tripStart, tripEnd)' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_PRODUCTION_RESOLVER_PATH"
+  exit 1
+}
+
+grep -Fq \
+  'val planResult = FerieturTariffCalculationSlices.build(' \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt || {
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_PRODUCTION_SLICE_PATH"
+  exit 1
+}
+
+if rg -q \
+  'calculateWithCatalog|TariffRuntimeCatalogSnapshotView' \
+  app/src/main/java/app/ferietur/ui/FerieturApp.kt
+then
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_INJECTED_UI_PATH"
+  exit 1
+fi
+
+if rg -q \
+  'TariffRuntimeCatalogView|TariffRuntimeCatalogSnapshotView' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_ENGINE_COUPLING"
+  exit 1
+fi
+
+if rg -q \
+  '624600|624_600|salary-2027-a5a8-synthetic' \
+  app/src/main/java
+then
+  echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=FAIL_SYNTHETIC_MAIN_DATA"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_RUNTIME_INJECTION_CONTRACT=PASS"
