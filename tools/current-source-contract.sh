@@ -25,6 +25,7 @@ for f in \
     app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt \
     app/src/main/java/app/ferietur/domain/TariffSegmentedMonetaryCalculation.kt \
     app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt \
+    app/src/main/java/app/ferietur/domain/TariffRuntimePresentation.kt \
     app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt \
     app/src/main/java/app/ferietur/domain/SavedTripDraft.kt \
     app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt \
@@ -58,6 +59,7 @@ tariff_segment_calculation = (root/'app/src/main/java/app/ferietur/domain/Tariff
 tariff_whole_trip_scope = (root/'app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt').read_text(encoding='utf-8')
 tariff_segmented_monetary = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentedMonetaryCalculation.kt').read_text(encoding='utf-8')
 tariff_runtime = (root/'app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt').read_text(encoding='utf-8')
+tariff_runtime_presentation = (root/'app/src/main/java/app/ferietur/domain/TariffRuntimePresentation.kt').read_text(encoding='utf-8')
 salary_tables = (root/'app/src/main/java/app/ferietur/domain/OsloSalaryTables.kt').read_text(encoding='utf-8')
 draft = (root/'app/src/main/java/app/ferietur/domain/SavedTripDraft.kt').read_text(encoding='utf-8')
 finalized = (root/'app/src/main/java/app/ferietur/domain/FinalizedTripSnapshot.kt').read_text(encoding='utf-8')
@@ -156,8 +158,8 @@ req('val tariffPackageId: String' in finalized and 'val tariffRateSetId: String'
 req('val salaryTableId: String' in finalized and 'val salaryTableEffectiveFrom: LocalDate' in finalized, 'snapshot_salary_table_metadata_missing')
 req('BuildConfig.VERSION_NAME' in ui and 'appVersionName = BuildConfig.VERSION_NAME' in ui, 'production_build_version_not_frozen')
 req('appVersionCode = BuildConfig.VERSION_CODE' in ui, 'production_build_code_not_frozen')
-req('rulesetVersion = tariffPackage.rulesetVersion' in ui, 'production_ruleset_not_bound_to_tariff_package')
-req('tariffPackageId = tariffPackage.id' in ui and 'tariffRateSetId = tariffRateSet.id' in ui, 'production_tariff_provenance_not_frozen')
+req('FinalizedTripSnapshotBuilder.buildFromRuntime(' in ui, 'runtime_finalization_builder_not_wired')
+req('runtimeCalculation = runtimeCalculation' in ui, 'runtime_calculation_not_passed_to_finalization')
 req('DOK25_2026_2028_RULESET_VERSION = "2026.3"' in tariff_catalog, 'tariff_package_ruleset_not_immutable')
 req('rulesetVersion = DOK25_2026_2028_RULESET_VERSION' in tariff_catalog, 'tariff_package_uses_moving_global_ruleset')
 req('rateSetId:' not in tariff_catalog, 'tariff_package_still_owns_single_rate_set')
@@ -170,7 +172,7 @@ req('fun planSegments' in tariff_resolution and 'TariffSegmentationResult' in ta
 req('FerieturTariffs.DOK25_2026_2028_RULESET_VERSION' in snapshot_codec, 'legacy_v1_tariff_inference_not_version_pinned')
 req('FerieturTariffRates.requireById(snapshot.tariffRateSetId)' in pdf_exporter, 'PDF_not_bound_to_frozen_rate_set')
 req('${s.tariffPackageId}' in pdf_exporter and '${s.tariffRateSetId}' in pdf_exporter, 'PDF_tariff_provenance_not_rendered')
-req('salaryTableId = salaryTable.id' in ui and 'salaryTableEffectiveFrom = salaryTable.effectiveFrom' in ui, 'resolved_salary_table_not_frozen')
+req('FinalizedTariffContextSnapshots.fromRuntime(runtimeCalculation)' in finalized, 'runtime_salary_tariff_contexts_not_frozen')
 req('rebuildFinalizedSnapshot' not in ui, 'finalized_snapshot_still_rebuilt_on_reopen')
 req('finalizedSnapshot = effectiveSaved.finalizedSnapshot' in ui, 'persisted_snapshot_not_restored')
 req('archiveCurrentFinalizationForEdit' in ui, 'editing_does_not_archive_prior_finalization')
@@ -294,6 +296,25 @@ req('presentationLineExplanation' in pdf_exporter and 'rateSetForLine(entry)' in
 req('Tariff- og lønnskontekster' in pdf_exporter and 'context.tariffRateSetId' in pdf_exporter, 'pdf_multi_context_source_provenance_missing')
 print('CURRENT_FINALIZED_PRESENTATION_BRIDGE_CONTRACT=PASS')
 
+# A4A10 live runtime presentation + Compose wiring contract.
+req('data class TariffRuntimeCalculationPresentation' in tariff_runtime_presentation, 'runtime_presentation_model_missing')
+req('data class TariffRuntimePresentationLine' in tariff_runtime_presentation, 'runtime_presentation_line_identity_missing')
+req('fun fromRuntime(' in tariff_runtime_presentation, 'runtime_to_live_presentation_bridge_missing')
+req('TripPlanEngine.buildWorktimeAudit(' in tariff_runtime_presentation, 'segmented_live_roster_audit_missing')
+req('fun buildWorktimeAudit(' in engine, 'shared_live_worktime_audit_missing')
+req('FerieturTariffRuntimeCalculator.calculate(' in ui, 'compose_not_wired_to_runtime_gateway')
+req('TariffRuntimeCalculationPresentations.fromRuntime(' in ui, 'compose_not_wired_to_runtime_presentation')
+req('FinalizedTripSnapshotBuilder.buildFromRuntime(' in ui, 'compose_finalization_not_wired_to_runtime_snapshot_builder')
+req('FinalizedTripSnapshotBuilder.build(' not in ui, 'legacy_single_context_finalization_still_used')
+req('checkedPreliminaryCalculation' not in ui, 'legacy_interactive_preliminary_gateway_still_used')
+req('tariffRateSetForRange' not in ui, 'legacy_single_context_control_rateset_helper_still_used')
+req('result.lineEntries' in ui and 'selectedLineKey' in ui, 'segmented_duplicate_line_identity_not_handled')
+req('key = "segmented:$index:' in tariff_runtime_presentation, 'segmented_runtime_line_keys_not_unique')
+req('if (controlRateSet != null)' in ui, 'control_screen_false_safe_state_not_suppressed')
+req('contexts: List<TariffRuntimeProvenanceSlice>' in ui, 'multi_context_live_rules_sheet_missing')
+req('runtimeControlReady' in ui and 'sharedControlRateSet' in ui, 'live_control_policy_not_fail_closed')
+print('CURRENT_COMPOSE_TARIFF_RUNTIME_WIRING_CONTRACT=PASS')
+
 # CODEAUDIT FIX02 persistence/main-safety contract.
 req('AtomicFile' in store, 'AtomicFile_missing')
 req('.delete()' not in store[store.find('override fun save'):store.find('override fun delete')], 'precommit_delete_regressed')
@@ -342,7 +363,7 @@ req('coerceAtMost(30)' not in ui, '31_day_truncation_regressed')
 req('TripDateRangePolicy.inclusiveDates(start, end)' in ui, 'tripDates_not_using_range_policy')
 req('fun inclusiveDates' in range_policy, 'inclusive_range_policy_missing')
 req('fun requireCompleteCoverage' in range_policy, 'range_coverage_invariant_missing')
-req('TripDateRangePolicy.requireCompleteCoverage' in ui, 'calculation_range_guard_missing')
+req('TripDateRangePolicy.requireCompleteCoverage' in tariff_runtime, 'runtime_calculation_range_guard_missing')
 
 # CA-004
 req(ui.count('NewTripDefaultsFactory.current()') >= 2, 'dynamic_new_trip_defaults_missing')
@@ -358,14 +379,14 @@ req('effectiveFromDate: LocalDate' in salary2026, 'typed_salary_effective_date_m
 req('object OsloSalaryTables' in salary_tables, 'effective_dated_salary_catalog_missing')
 req('class SalaryTableCatalog' in salary_tables and 'class SalaryTablePeriod' in salary_tables, 'extensible_salary_catalog_missing')
 req('earliestSupportedDate' in salary_tables, 'salary_earliest_supported_date_missing')
-req('salaryRangeSupported' in ui and 'FerieturTariffResolver.supportsRange(startDate, endDate)' in ui, 'tariff_salary_range_support_state_missing')
+req('salaryRangeSupported' in ui and 'FerieturTariffResolver.planSegments(tripStart, tripEnd)' in ui, 'tariff_salary_segment_support_state_missing')
 req('FlowScreen.TRIP -> validRange && chapter20Applicable && salaryRangeSupported' in ui, 'unsupported_salary_range_not_blocking_flow')
 req('SelectableDates' in ui and 'minimumDate' in ui, 'salary_min_date_picker_guard_missing')
-req('FerieturTariffResolver.requireSupportedRange' in ui, 'coherent_tariff_calculation_guard_missing')
+req('FerieturTariffRuntimeCalculator.calculate(' in ui, 'coherent_runtime_tariff_calculation_guard_missing')
 req('object FerieturTariffRates' in tariff_rates and 'DOK25_2026_2028_RATE_SET_ID' in tariff_rates, 'versioned_tariff_rate_set_missing')
 req('rateSet: TariffRateSet = FerieturTariffRates.current' in engine, 'calculation_rate_set_not_injected')
-req('private fun checkedPreliminaryCalculation' in ui and 'val tariffContext = FerieturTariffResolver.requireSupportedRange' in ui and 'val rateSet = tariffContext.rateSet' in ui and 'rateSet = rateSet' in ui, 'interactive_calculation_not_date_resolved_to_rate_set')
-req('private fun tariffRateSetForRange' in ui and 'FerieturTariffResolver.requireSupportedRange(start, end).rateSet' in ui and 'TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)' in ui, 'interactive_control_findings_not_date_resolved_to_rate_set')
+req('TariffRuntimeCalculationPresentations.fromRuntime(' in ui and 'sharedControlRateSet' in ui, 'interactive_calculation_not_effective_date_resolved')
+req('FinalizedTripSnapshotBuilder.buildFromRuntime(' in ui, 'runtime_calculation_not_frozen_on_finalization')
 for token in [
     'rateSet.chapter20ActiveMultiplier',
     'rateSet.passiveWorkDivisor',
@@ -394,7 +415,7 @@ for forbidden in [
     'LocalTime.of(20, 0)',
 ]:
     req(forbidden not in engine, f'calculation_constant_leaked_back_into_engine_{forbidden}')
-req('unsupportedSalaryRange' in ui and 'FlowScreen.TRIP' in ui, 'legacy_unsupported_salary_resume_guard_missing')
+req('unsupportedSalaryRange' in ui and 'supportsSegmentedRange' in ui and 'FlowScreen.TRIP' in ui, 'effective_dated_resume_guard_missing')
 req('D25_20_6_EXACT_THRESHOLD' in engine, 'exact_six_hour_boundary_not_fail_closed')
 req('stay-allowance-exact-threshold-open' in engine, 'exact_six_hour_open_line_missing')
 
@@ -413,3 +434,34 @@ RC=$?
 [[ "$RC" -eq 0 ]] || exit "$RC"
 
 echo "CURRENT_SOURCE_CONTRACT=PASS"
+
+
+PDF_EXPORTER="app/src/main/java/app/ferietur/export/PdfExporter.kt"
+PDF_SEGMENTED_TEST="app/src/test/java/app/ferietur/export/PdfExporterSegmentedPresentationTest.kt"
+
+grep -Fq 'internal fun evidenceDateLabelForPdf(' "$PDF_EXPORTER" || {
+  echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=FAIL_EVIDENCE_DATE_HELPER"
+  exit 1
+}
+
+grep -Fq 'val workPeriod = evidenceDateLabelForPdf(entry.line.evidence) ?: return base' "$PDF_EXPORTER" || {
+  echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=FAIL_WORK_DATE_BINDING"
+  exit 1
+}
+
+grep -Fq 'w.finalFooterMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")' "$PDF_EXPORTER" || {
+  echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=FAIL_FINAL_METADATA_FOOTER"
+  exit 1
+}
+
+grep -Fq 'private fun drawFinalFooter(text: String)' "$PDF_EXPORTER" || {
+  echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=FAIL_FINAL_FOOTER_RENDERER"
+  exit 1
+}
+
+[[ -f "$PDF_SEGMENTED_TEST" ]] || {
+  echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=FAIL_REGRESSION_TEST"
+  exit 1
+}
+
+echo "CURRENT_SEGMENTED_PDF_PRESENTATION_HARDENING_CONTRACT=PASS"

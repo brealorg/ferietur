@@ -64,6 +64,17 @@ data class DayCalculationAudit(
     val openSubtotal: BigDecimal,
 )
 
+data class CalculationWorktimeAudit(
+    val rosterMinutes: Long,
+    val rosterUncoveredMinutes: Long,
+    val rosterUncoveredEvidence: List<CalculationEvidence>,
+    val activeMinutes: Long,
+    val activeInsideRosterMinutes: Long,
+    val activeOutsideRosterMinutes: Long,
+    val restingNightMinutes: Long,
+    val restingNightOutsideRosterMinutes: Long,
+)
+
 data class PreliminaryCalculation(
     val hourlyRate: BigDecimal,
     val rosterMinutes: Long,
@@ -876,6 +887,50 @@ object TripPlanEngine {
             alreadyCoveredByNormalRosterAmount = alreadyCoveredByNormalRosterAmount,
             excludedKnownRuleAmount = excludedKnownRuleAmount,
             applicableUnresolvedRuleIds = applicableUnresolvedRuleIds,
+        )
+    }
+
+    /**
+     * Non-monetary worktime/roster audit shared by live single- and
+     * multi-context presentation. It deliberately uses the same projection and
+     * roster-overlap primitives as the calculation core, but does not inspect
+     * salary or tariff rates.
+     */
+    fun buildWorktimeAudit(
+        fundingMode: FundingMode,
+        blocks: List<WorkBlock>,
+        roster: Map<LocalDate, String>,
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+    ): CalculationWorktimeAudit {
+        require(tripEnd.isAfter(tripStart))
+        val activeBlocks = normalizedActiveBlocks(blocks)
+        val restingBlocks = blocks.filter { it.kind == TimeKind.RESTING_NIGHT_WATCH }
+        val activeMinutes = activeBlocks.sumOf(::durationMinutes)
+        val restingMinutes = restingBlocks.sumOf(::durationMinutes)
+        val activeInside = activeBlocks.sumOf { overlapWithRoster(it, roster) }.coerceAtMost(activeMinutes)
+        val restingInside = restingBlocks.sumOf { overlapWithRoster(it, roster) }.coerceAtMost(restingMinutes)
+        val uncovered = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
+            rosterUncoveredEvidence(blocks, roster, tripStart, tripEnd)
+        } else {
+            emptyList()
+        }
+        val rosterMinutes = roster.flatMap { (date, value) ->
+            RosterEntryCodec.decode(value).mapNotNull { shift ->
+                val interval = TurnusOverlapEngine.intervalFor(date, shift) ?: return@mapNotNull null
+                intersection(interval.first, interval.second, tripStart, tripEnd)
+            }
+        }.sumOf { (start, end) -> ChronoUnit.MINUTES.between(start, end) }
+
+        return CalculationWorktimeAudit(
+            rosterMinutes = rosterMinutes,
+            rosterUncoveredMinutes = uncovered.sumOf { it.minutes },
+            rosterUncoveredEvidence = uncovered,
+            activeMinutes = activeMinutes,
+            activeInsideRosterMinutes = activeInside,
+            activeOutsideRosterMinutes = activeMinutes - activeInside,
+            restingNightMinutes = restingMinutes,
+            restingNightOutsideRosterMinutes = restingMinutes - restingInside,
         )
     }
 

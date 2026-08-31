@@ -163,6 +163,7 @@ import app.ferietur.domain.DomainRule
 import app.ferietur.domain.EmployerKind
 import app.ferietur.domain.FerieturRules
 import app.ferietur.domain.FerieturTariffResolver
+import app.ferietur.domain.FerieturTariffRuntimeCalculator
 import app.ferietur.domain.FinalizedTripSnapshot
 import app.ferietur.domain.FinalizedTripSnapshotBuilder
 import app.ferietur.domain.SettlementSnapshot
@@ -180,6 +181,12 @@ import app.ferietur.domain.SavedTripDraft
 import app.ferietur.domain.ShiftCategory
 import app.ferietur.domain.ShiftDefinition
 import app.ferietur.domain.SolhaugenShiftCatalog
+import app.ferietur.domain.TariffRuntimeCalculation
+import app.ferietur.domain.TariffRuntimeCalculationPresentation
+import app.ferietur.domain.TariffRuntimeCalculationPresentations
+import app.ferietur.domain.TariffRuntimeCalculationResult
+import app.ferietur.domain.TariffRuntimeProvenanceSlice
+import app.ferietur.domain.TariffSegmentationResult
 import app.ferietur.domain.TimeKind
 import app.ferietur.domain.TravelNoticeStatus
 import app.ferietur.domain.TripDateRangePolicy
@@ -540,14 +547,27 @@ fun FerieturApp() {
 
     val fundingMode = rosterComparisonMode.toFundingMode()
     val dates = tripDates(startDate, endDate)
-    val salaryRangeSupported = FerieturTariffResolver.supportsRange(startDate, endDate)
     val rosterHasOverlap = TripPlanEngine.hasRosterOverlap(roster)
     val rosterComplete = dates.all { date -> RosterEntryCodec.decode(roster[date]).isNotEmpty() } && !rosterHasOverlap
-    val annualSalary = OsloSalaryTables.annualSalaryForRange(salaryStep, startDate, endDate) ?: BigDecimal.ZERO
     val tripStart = LocalDateTime.of(startDate, startTime)
     val tripEnd = LocalDateTime.of(endDate, endTime)
     val validRange = tripEnd.isAfter(tripStart)
     val chapter20Applicable = TripPlanEngine.chapter20Applies(tripStart, tripEnd)
+    val tariffSegmentation = remember(tripStart, tripEnd, validRange) {
+        if (validRange) FerieturTariffResolver.planSegments(tripStart, tripEnd) else null
+    }
+    val salaryRangeSupported = tariffSegmentation is TariffSegmentationResult.Success
+    val multipleSalaryContexts = (tariffSegmentation as? TariffSegmentationResult.Success)
+        ?.segments
+        ?.map { it.salaryTable.id }
+        ?.distinct()
+        ?.size
+        ?.let { it > 1 }
+        ?: false
+    // The pay screen shows the table effective at trip start. Runtime money is
+    // never calculated from this scalar; the tariff runtime gateway resolves
+    // and freezes annual salary independently for every effective-date slice.
+    val annualSalary = OsloSalaryTables.annualSalaryForDate(salaryStep, startDate) ?: BigDecimal.ZERO
     val effectiveRoster = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) roster else emptyMap<LocalDate, String>()
     val rosterGapEvidence = if (rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
         TripPlanEngine.rosterUncoveredEvidence(TripPlanEngine.projectRange(dates, plans), effectiveRoster, tripStart, tripEnd)
@@ -568,6 +588,69 @@ fun FerieturApp() {
         outboundTravelKind != null && returnTravelKind != null &&
         outboundArrival.isAfter(tripStart) && !outboundArrival.isAfter(returnDeparture) &&
         returnDeparture.isBefore(tripEnd)
+
+    val tariffRuntimeResult: TariffRuntimeCalculationResult? = remember(
+        fundingMode,
+        dates,
+        effectiveRoster,
+        plans,
+        salaryStep,
+        weeklyBasis,
+        weekendProfile,
+        tripStart,
+        tripEnd,
+        chapter20Applicable,
+        salaryRangeSupported,
+    ) {
+        if (validRange && chapter20Applicable && salaryRangeSupported) {
+            FerieturTariffRuntimeCalculator.calculate(
+                fundingMode = fundingMode,
+                dates = dates,
+                roster = effectiveRoster,
+                plans = plans,
+                salaryStep = salaryStep,
+                weeklyBasis = weeklyBasis,
+                weekendProfile = weekendProfile,
+                tripStart = tripStart,
+                tripEnd = tripEnd,
+            )
+        } else {
+            null
+        }
+    }
+    val tariffRuntimeCalculation = (tariffRuntimeResult as? TariffRuntimeCalculationResult.Success)?.calculation
+    val tariffRuntimeFailure = tariffRuntimeResult as? TariffRuntimeCalculationResult.Failure
+    val tariffRuntimePresentation = remember(
+        tariffRuntimeCalculation,
+        fundingMode,
+        dates,
+        effectiveRoster,
+        plans,
+        weeklyBasis,
+        tripStart,
+        tripEnd,
+    ) {
+        tariffRuntimeCalculation?.let { calculation ->
+            TariffRuntimeCalculationPresentations.fromRuntime(
+                calculation = calculation,
+                fundingMode = fundingMode,
+                dates = dates,
+                roster = effectiveRoster,
+                plans = plans,
+                weeklyBasis = weeklyBasis,
+                tripStart = tripStart,
+                tripEnd = tripEnd,
+            )
+        }
+    }
+    val currentSettlementSummary = tariffRuntimeCalculation?.let { calculation ->
+        settlementSummary(
+            calculation = calculation,
+            mode = settlementMode,
+            customAmountText = settlementAmountText,
+            reason = settlementReason,
+        )
+    }
 
     fun currentDraft(now: Long = System.currentTimeMillis()): SavedTripDraft? {
         val id = currentTripId ?: return null
@@ -663,9 +746,11 @@ fun FerieturApp() {
         salaryStep = effectiveSaved.salaryStep
         weeklyBasis = effectiveSaved.weeklyBasis
         weekendProfile = effectiveSaved.weekendProfile
-        val unsupportedSalaryRange = !FerieturTariffResolver.supportsRange(
-            effectiveSaved.startDate,
-            effectiveSaved.endDate,
+        val savedTripStart = LocalDateTime.of(effectiveSaved.startDate, effectiveSaved.startTime)
+        val savedTripEnd = LocalDateTime.of(effectiveSaved.endDate, effectiveSaved.endTime)
+        val unsupportedSalaryRange = !FerieturTariffResolver.supportsSegmentedRange(
+            savedTripStart,
+            savedTripEnd,
         )
         payslipChecked = effectiveSaved.payslipChecked && !unsupportedSalaryRange
         rosterGapConfirmed = effectiveSaved.rosterGapConfirmed
@@ -687,8 +772,6 @@ fun FerieturApp() {
         finalizationHistory = effectiveSaved.finalizationHistory
         migrationHistory = effectiveSaved.migrationHistory
         val restoredRawScreen = FlowScreen.entries.firstOrNull { it.name == effectiveSaved.screen } ?: FlowScreen.TRIP
-        val savedTripStart = LocalDateTime.of(effectiveSaved.startDate, effectiveSaved.startTime)
-        val savedTripEnd = LocalDateTime.of(effectiveSaved.endDate, effectiveSaved.endTime)
         val unsupportedDayTrip = TripPlanEngine.isDayTrip(savedTripStart, savedTripEnd)
         val restoredScreen = when {
             unsupportedDayTrip || unsupportedSalaryRange -> FlowScreen.TRIP
@@ -810,6 +893,8 @@ fun FerieturApp() {
         }
     }
 
+    val runtimeCalculationReady = tariffRuntimeCalculation != null
+    val runtimeControlReady = tariffRuntimePresentation?.sharedControlRateSet != null
     val nextEnabled = when (screen) {
         FlowScreen.HOME -> true
         FlowScreen.TRIP -> validRange && chapter20Applicable && salaryRangeSupported && tripTitle.isNotBlank()
@@ -818,10 +903,13 @@ fun FerieturApp() {
         FlowScreen.ROSTER -> rosterComplete
         FlowScreen.TRAVEL -> travelValid
         FlowScreen.TRIP_PLAN -> true
-        FlowScreen.CALCULATION -> true
-        FlowScreen.SETTLEMENT -> settlementMode == SettlementMode.FULL_CALCULATION ||
-            (settlementAmountText.toNorwegianMoneyOrNull() != null && settlementReason.isNotBlank())
-        FlowScreen.CONTROL -> rosterGapMinutes == 0L || rosterGapConfirmed
+        FlowScreen.CALCULATION -> runtimeCalculationReady
+        FlowScreen.SETTLEMENT -> runtimeCalculationReady && (
+            settlementMode == SettlementMode.FULL_CALCULATION ||
+                (settlementAmountText.toNorwegianMoneyOrNull() != null && settlementReason.isNotBlank())
+            )
+        FlowScreen.CONTROL -> runtimeCalculationReady && runtimeControlReady &&
+            (rosterGapMinutes == 0L || rosterGapConfirmed)
         FlowScreen.SUMMARY -> true
     }
 
@@ -858,25 +946,10 @@ fun FerieturApp() {
                 screen = FlowScreen.TRIP_PLAN
                 return
             }
-            val summary = settlementSummary(
-                fundingMode = fundingMode,
-                dates = dates,
-                roster = effectiveRoster,
-                plans = plans,
-                annualSalary = annualSalary,
-                weeklyBasis = weeklyBasis,
-                weekendProfile = weekendProfile,
-                tripStart = tripStart,
-                tripEnd = tripEnd,
-                mode = settlementMode,
-                customAmountText = settlementAmountText,
-                reason = settlementReason,
-            )
-            val tariffContext = FerieturTariffResolver.requireSupportedRange(startDate, endDate)
-            val tariffPackage = tariffContext.tariffPackage
-            val tariffRateSet = tariffContext.rateSet
-            val salaryTable = tariffContext.salaryTable
-            finalizedSnapshot = FinalizedTripSnapshotBuilder.build(
+            val runtimeCalculation = tariffRuntimeCalculation ?: return
+            val summary = currentSettlementSummary ?: return
+            if (tariffRuntimePresentation?.sharedControlRateSet == null) return
+            finalizedSnapshot = FinalizedTripSnapshotBuilder.buildFromRuntime(
                 title = tripTitle,
                 employerKind = employerKind,
                 payingParty = payingParty,
@@ -885,13 +958,13 @@ fun FerieturApp() {
                 roster = effectiveRoster,
                 plans = plans,
                 salaryStep = salaryStep,
-                annualSalary = annualSalary,
                 weeklyBasis = weeklyBasis,
                 weekendProfile = weekendProfile,
                 payslipChecked = payslipChecked,
                 rosterGapConfirmed = rosterGapConfirmed,
                 tripStart = tripStart,
                 tripEnd = tripEnd,
+                runtimeCalculation = runtimeCalculation,
                 settlement = SettlementSnapshot(
                     calculatedAmount = summary.calculatedAmount,
                     proposedAmount = summary.proposedAmount,
@@ -901,12 +974,6 @@ fun FerieturApp() {
                 snapshotId = UUID.randomUUID().toString(),
                 appVersionName = BuildConfig.VERSION_NAME,
                 appVersionCode = BuildConfig.VERSION_CODE,
-                rulesetVersion = tariffPackage.rulesetVersion,
-                tariffPackageId = tariffPackage.id,
-                tariffRateSetId = tariffRateSet.id,
-                salaryTableId = salaryTable.id,
-                salaryTableEffectiveFrom = salaryTable.effectiveFrom,
-                salaryTableSourceLabel = salaryTable.sourceLabel,
             )
             screen = FlowScreen.SUMMARY
             currentDraft()?.let(session::persistDraft)
@@ -1041,20 +1108,9 @@ fun FerieturApp() {
                     dates = dates,
                     plans = plans,
                     roster = effectiveRoster,
-                    settlementSummary = settlementSummary(
-                        fundingMode = fundingMode,
-                        dates = dates,
-                        roster = effectiveRoster,
-                        plans = plans,
-                        annualSalary = annualSalary,
-                        weeklyBasis = weeklyBasis,
-                        weekendProfile = weekendProfile,
-                        tripStart = tripStart,
-                        tripEnd = tripEnd,
-                        mode = settlementMode,
-                        customAmountText = settlementAmountText,
-                        reason = settlementReason,
-                    ),
+                    settlementSummary = currentSettlementSummary,
+                    controlRateSet = tariffRuntimePresentation?.sharedControlRateSet,
+                    runtimeFailureDetail = tariffRuntimeFailure?.detail,
                     canExport = finalizedSnapshot != null,
                     onBack = ::closeTripOverview,
                     onContinue = ::continueFromOverview,
@@ -1129,6 +1185,7 @@ fun FerieturApp() {
                     payslipChecked = false
                 },
                 annualSalary = annualSalary,
+                multipleSalaryContexts = multipleSalaryContexts,
                 weeklyBasis = weeklyBasis,
                 onWeeklyBasis = {
                     weeklyBasis = it
@@ -1188,14 +1245,9 @@ fun FerieturApp() {
                 onBack = ::goBack,
                 employerKind = employerKind,
                 fundingMode = fundingMode,
-                dates = dates,
-                roster = effectiveRoster,
-                plans = plans,
-                annualSalary = annualSalary,
+                result = tariffRuntimePresentation,
+                runtimeFailureDetail = tariffRuntimeFailure?.detail,
                 weeklyBasis = weeklyBasis,
-                weekendProfile = weekendProfile,
-                tripStart = tripStart,
-                tripEnd = tripEnd,
             )
             FlowScreen.SETTLEMENT -> SettlementScreen(
                 padding = padding,
@@ -1203,14 +1255,8 @@ fun FerieturApp() {
                 onBack = ::goBack,
                 employerKind = employerKind,
                 fundingMode = fundingMode,
-                dates = dates,
-                roster = effectiveRoster,
-                plans = plans,
-                annualSalary = annualSalary,
-                weeklyBasis = weeklyBasis,
-                weekendProfile = weekendProfile,
-                tripStart = tripStart,
-                tripEnd = tripEnd,
+                result = tariffRuntimePresentation,
+                runtimeFailureDetail = tariffRuntimeFailure?.detail,
                 settlementMode = settlementMode,
                 onSettlementMode = { settlementMode = it },
                 customAmountText = settlementAmountText,
@@ -1229,20 +1275,9 @@ fun FerieturApp() {
                 rosterGapEvidence = rosterGapEvidence,
                 rosterGapConfirmed = rosterGapConfirmed,
                 onRosterGapConfirmed = { rosterGapConfirmed = it },
-                settlementSummary = settlementSummary(
-                    fundingMode = fundingMode,
-                    dates = dates,
-                    roster = effectiveRoster,
-                    plans = plans,
-                    annualSalary = annualSalary,
-                    weeklyBasis = weeklyBasis,
-                    weekendProfile = weekendProfile,
-                    tripStart = tripStart,
-                    tripEnd = tripEnd,
-                    mode = settlementMode,
-                    customAmountText = settlementAmountText,
-                    reason = settlementReason,
-                ),
+                settlementSummary = currentSettlementSummary,
+                controlRateSet = tariffRuntimePresentation?.sharedControlRateSet,
+                runtimeFailureDetail = tariffRuntimeFailure?.detail,
             )
                 FlowScreen.SUMMARY -> FinalSummaryScreen(
                     padding = padding,
@@ -2072,16 +2107,19 @@ private fun TripOverviewScreen(
     dates: List<LocalDate>,
     plans: Map<LocalDate, List<PlannedBlock>>,
     roster: Map<LocalDate, String>,
-    settlementSummary: SettlementSummary,
+    settlementSummary: SettlementSummary?,
+    controlRateSet: app.ferietur.domain.TariffRateSet?,
+    runtimeFailureDetail: String?,
     canExport: Boolean,
     onBack: () -> Unit,
     onContinue: () -> Unit,
     onOpen: (FlowScreen) -> Unit,
 ) {
-    val unresolvedCount = settlementSummary.unresolvedRuleCount
+    val unresolvedCount = settlementSummary?.unresolvedRuleCount ?: 0
     val blocks = TripPlanEngine.projectRange(dates, plans)
-    val rateSet = tariffRateSetForRange(startDate, endDate)
-    val findings = TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)
+    val findings = controlRateSet?.let { rateSet ->
+        TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)
+    }.orEmpty()
     val reviewCount = findings.count { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
     val flow = flowSequence(fundingMode)
     val calculationIndex = flow.indexOf(FlowScreen.CALCULATION)
@@ -2113,7 +2151,7 @@ private fun TripOverviewScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
-                    if (reachedCalculation) {
+                    if (reachedCalculation && settlementSummary != null) {
                         Spacer(Modifier.height(4.dp))
                         Text("Beregnet med opplysningene som er lagret nå", style = MaterialTheme.typography.labelLarge)
                         Text(currency(settlementSummary.calculatedAmount), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
@@ -2123,6 +2161,11 @@ private fun TripOverviewScreen(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
+                    } else if (reachedCalculation) {
+                        Text(
+                            runtimeFailureDetail ?: "Beregningen kan ikke fullføres med det registrerte grunnlaget.",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
                     } else {
                         Text(
                             "Beregningen er ikke kommet til beregningssteget ennå.",
@@ -2166,8 +2209,22 @@ private fun TripOverviewScreen(
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatusRow(employerKind != EmployerKind.UNSPECIFIED, "Arbeidsgiver: ${employerLabel(employerKind)}")
                     StatusRow(true, "Betalingsscenario: ${payingPartyLabel(payingParty)}")
-                    StatusRow(reviewCount == 0, if (reviewCount == 0) "Ingen arbeidstidsforhold er flagget" else "$reviewCount arbeidstidsforhold bør vurderes")
-                    StatusRow(unresolvedCount == 0, if (unresolvedCount == 0) "Ingen beregningsregler står åpne" else "$unresolvedCount beregningsregler må avklares")
+                    StatusRow(
+                        controlRateSet != null && reviewCount == 0,
+                        when {
+                            controlRateSet == null -> "Arbeidstidskontrollen mangler et entydig felles tariffgrunnlag"
+                            reviewCount == 0 -> "Ingen arbeidstidsforhold er flagget"
+                            else -> "$reviewCount arbeidstidsforhold bør vurderes"
+                        },
+                    )
+                    StatusRow(
+                        settlementSummary != null && unresolvedCount == 0,
+                        when {
+                            settlementSummary == null -> "Beregningsgrunnlaget er ikke tilgjengelig"
+                            unresolvedCount == 0 -> "Ingen beregningsregler står åpne"
+                            else -> "$unresolvedCount beregningsregler må avklares"
+                        },
+                    )
                     StatusRow(canExport, if (canExport) "Turen har et ferdigstilt dokumentasjonsgrunnlag" else "Fullfør Kontroll før du lager PDF")
                 }
             }
@@ -2342,7 +2399,7 @@ private fun TripBasicsScreen(
                     FindingSeverity.CRITICAL,
                     "Datoene støttes ikke av verifisert tariff- og lønnsgrunnlag",
                     "Ferietur har verifisert beregningsgrunnlag innenfor perioden ${fullDate(earliestSalaryDate)}–${fullDate(latestSalaryDate)}. " +
-                        "Hele turen må dekkes av samme verifiserte tariff-, sats- og lønnstabellgrunnlag; ellers stoppes beregningen.",
+                        "Hele turen må være dekket av sammenhengende verifiserte tariff-, sats- og lønnstabellperioder. Rene sats- og lønnstabellskifter kan kombineres automatisk; semantiske regelendringer stoppes.",
                 )
             }
         } else if (!chapter20Applicable) {
@@ -2876,6 +2933,7 @@ private fun PayBasisScreen(
     salaryStep: Int,
     onSalaryStep: (Int) -> Unit,
     annualSalary: BigDecimal,
+    multipleSalaryContexts: Boolean,
     weeklyBasis: WeeklyBasis,
     onWeeklyBasis: (WeeklyBasis) -> Unit,
     weekendProfile: WeekendProfile,
@@ -2915,7 +2973,11 @@ private fun PayBasisScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("Lønnstrinn", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "${OsloSalaryTable2026.sourceLabel}. Årslønnen hentes fra tabellen for valgt lønnstrinn.",
+                            if (multipleSalaryContexts) {
+                                "Årslønnen hentes fra hver verifiserte lønnstabell som gjelder i turperioden, med samme valgte lønnstrinn."
+                            } else {
+                                "${OsloSalaryTable2026.sourceLabel}. Årslønnen hentes fra tabellen for valgt lønnstrinn."
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -2993,7 +3055,11 @@ private fun PayBasisScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "Lønnstabell fra 1. mai 2026",
+                            if (multipleSalaryContexts) {
+                                "Turen bruker flere verifiserte lønnsperioder; beløpet over er perioden ved turstart."
+                            } else {
+                                "Lønnstabell fra 1. mai 2026"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -3369,55 +3435,57 @@ private fun CalculationScreen(
     onBack: () -> Unit,
     employerKind: EmployerKind,
     fundingMode: FundingMode,
-    dates: List<LocalDate>,
-    roster: Map<LocalDate, String>,
-    plans: Map<LocalDate, List<PlannedBlock>>,
-    annualSalary: BigDecimal,
+    result: TariffRuntimeCalculationPresentation?,
+    runtimeFailureDetail: String?,
     weeklyBasis: WeeklyBasis,
-    weekendProfile: WeekendProfile,
-    tripStart: LocalDateTime,
-    tripEnd: LocalDateTime,
 ) {
-    val result = checkedPreliminaryCalculation(
-        fundingMode = fundingMode,
-        dates = dates,
-        roster = roster,
-        plans = plans,
-        annualSalary = annualSalary,
-        weeklyBasis = weeklyBasis,
-        weekendProfile = weekendProfile,
-        tripStart = tripStart,
-        tripEnd = tripEnd,
-    )
-    val unresolved = FerieturRules.applicableUnresolvedRules(result)
-    val includedLines = result.lines.filter {
-        it.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS
-    }
-    val coveredRosterLines = result.lines.filter {
-        it.paymentTreatment == PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER
-    }
-    val openLines = result.lines.filter {
-        it.paymentTreatment == PaymentTreatment.OPEN
+    if (result == null) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { ScreenHeader("Beregning", stepLabel, onBack) }
+            item {
+                InlineMessage(
+                    FindingSeverity.CRITICAL,
+                    "Beregningen kan ikke fullføres",
+                    runtimeFailureDetail ?: "Kontroller tariffperiode, arbeidsplan og registrerte reiseopplysninger.",
+                )
+            }
+        }
+        return
     }
 
-    var selectedLineId by remember { mutableStateOf<String?>(null) }
+    val unresolved = FerieturRules.applicableUnresolvedRules(result.applicableUnresolvedRuleIds)
+    val includedLines = result.lineEntries.filter {
+        it.line.paymentTreatment == PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS
+    }
+    val coveredRosterLines = result.lineEntries.filter {
+        it.line.paymentTreatment == PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER
+    }
+    val openLines = result.lineEntries.filter {
+        it.line.paymentTreatment == PaymentTreatment.OPEN
+    }
+
+    var selectedLineKey by remember { mutableStateOf<String?>(null) }
     var showCoveredRoster by remember { mutableStateOf(false) }
     var showDayAudit by remember { mutableStateOf(false) }
     var selectedAuditDate by remember { mutableStateOf<LocalDate?>(null) }
     var showRules by remember { mutableStateOf(false) }
 
-    selectedLineId?.let { lineId ->
-        result.lines.firstOrNull { it.id == lineId }?.let { line ->
+    selectedLineKey?.let { lineKey ->
+        result.lineEntries.firstOrNull { it.key == lineKey }?.let { entry ->
             CalculationLineDetailSheet(
-                line = line,
-                onDismiss = { selectedLineId = null },
+                line = entry.line,
+                onDismiss = { selectedLineKey = null },
             )
         }
     }
 
     if (showCoveredRoster) {
         CoveredRosterDetailSheet(
-            lines = coveredRosterLines,
+            lines = coveredRosterLines.map { it.line },
             activeInsideRosterMinutes = result.activeInsideRosterMinutes,
             totalAmount = result.alreadyCoveredByNormalRosterAmount,
             onDismiss = { showCoveredRoster = false },
@@ -3439,8 +3507,7 @@ private fun CalculationScreen(
 
     if (showRules) {
         CalculationRulesSheet(
-            hourlyRate = result.hourlyRate,
-            annualSalary = annualSalary,
+            contexts = result.provenance,
             weeklyBasis = weeklyBasis,
             unresolved = unresolved,
             onDismiss = { showRules = false },
@@ -3508,19 +3575,19 @@ private fun CalculationScreen(
 
         item { MethodSectionHeading("Det som kommer i tillegg") }
 
-        items(includedLines, key = { "summary-${it.id}" }) { line ->
+        items(includedLines, key = { it.key }) { entry ->
             CalculationSummaryRow(
-                line = line,
-                onClick = { selectedLineId = line.id },
+                line = entry.line,
+                onClick = { selectedLineKey = entry.key },
             )
         }
 
         if (openLines.isNotEmpty()) {
             item { MethodSectionHeading("Må avklares") }
-            items(openLines, key = { "open-summary-${it.id}" }) { line ->
+            items(openLines, key = { it.key }) { entry ->
                 CalculationSummaryRow(
-                    line = line,
-                    onClick = { selectedLineId = line.id },
+                    line = entry.line,
+                    onClick = { selectedLineKey = entry.key },
                 )
             }
         }
@@ -3563,7 +3630,9 @@ private fun CalculationScreen(
         item {
             CalculationNavigationRow(
                 title = "Regler og beregningsgrunnlag",
-                supporting = "${currency(result.hourlyRate)}/t · detaljer, kilder og eventuelle åpne regler",
+                supporting = result.singleHourlyRateOrNull?.let { hourlyRate ->
+                    "${currency(hourlyRate)}/t · detaljer, kilder og eventuelle åpne regler"
+                } ?: "${result.provenance.size} tariff-/lønnsperioder · detaljer, kilder og eventuelle åpne regler",
                 icon = Icons.Rounded.Info,
                 onClick = { showRules = true },
             )
@@ -4339,7 +4408,7 @@ private fun CoveredRosterDetailSheet(
                 }
             }
 
-            items(lines, key = { "covered-detail-${it.id}" }) { line ->
+            itemsIndexed(lines, key = { index, line -> "covered-detail-$index-${line.id}" }) { _, line ->
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Column(
@@ -4538,8 +4607,7 @@ private fun CalculationDayAuditSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CalculationRulesSheet(
-    hourlyRate: BigDecimal,
-    annualSalary: BigDecimal,
+    contexts: List<TariffRuntimeProvenanceSlice>,
     weeklyBasis: WeeklyBasis,
     unresolved: List<DomainRule>,
     onDismiss: () -> Unit,
@@ -4565,23 +4633,62 @@ private fun CalculationRulesSheet(
                 )
             }
 
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("Timelønn", fontWeight = FontWeight.SemiBold)
+            if (contexts.size == 1) {
+                item {
+                    val context = contexts.single()
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Timelønn", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${currency(context.hourlyRate)} per time",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Årslønn ${currency(context.annualSalary)} deles på ${weeklyBasis.divisor} timer (${weeklyBasisUserLabel(weeklyBasis)}).",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Kilde: ${context.salaryTableSourceLabel} · Dok. 25 punkt 9.6",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            } else {
+                item {
                     Text(
-                        "${currency(hourlyRate)} per time",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "Årslønn ${currency(annualSalary)} deles på ${weeklyBasis.divisor} timer (${weeklyBasisUserLabel(weeklyBasis)}).",
+                        "${contexts.size} tariff- og lønnsperioder brukes i turen. Hver periode beholder sin egen årslønn og timelønn.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(
-                        "Kilde: Dok. 25 2026–28, punkt 9.6",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                }
+                itemsIndexed(contexts, key = { index, context -> "$index-${context.tariffRateSetId}-${context.salaryTableId}" }) { index, context ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "Periode ${index + 1}: ${shortDate(context.start)}–${shortDate(context.end)}",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "${currency(context.hourlyRate)}/t · årslønn ${currency(context.annualSalary)}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            context.salaryTableSourceLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Tariff ${context.tariffPackageId} · regelsett ${context.rulesetVersion}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Satssett ${context.tariffRateSetId} · lønnstabell ${context.salaryTableId}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (index < contexts.lastIndex) HorizontalDivider()
                 }
             }
 
@@ -4622,14 +4729,8 @@ private fun SettlementScreen(
     onBack: () -> Unit,
     employerKind: EmployerKind,
     fundingMode: FundingMode,
-    dates: List<LocalDate>,
-    roster: Map<LocalDate, String>,
-    plans: Map<LocalDate, List<PlannedBlock>>,
-    annualSalary: BigDecimal,
-    weeklyBasis: WeeklyBasis,
-    weekendProfile: WeekendProfile,
-    tripStart: LocalDateTime,
-    tripEnd: LocalDateTime,
+    result: TariffRuntimeCalculationPresentation?,
+    runtimeFailureDetail: String?,
     settlementMode: SettlementMode,
     onSettlementMode: (SettlementMode) -> Unit,
     customAmountText: String,
@@ -4637,17 +4738,23 @@ private fun SettlementScreen(
     reason: String,
     onReason: (String) -> Unit,
 ) {
-    val result = checkedPreliminaryCalculation(
-        fundingMode = fundingMode,
-        dates = dates,
-        roster = roster,
-        plans = plans,
-        annualSalary = annualSalary,
-        weeklyBasis = weeklyBasis,
-        weekendProfile = weekendProfile,
-        tripStart = tripStart,
-        tripEnd = tripEnd,
-    )
+    if (result == null) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { ScreenHeader("Betalingsforslag", stepLabel, onBack) }
+            item {
+                InlineMessage(
+                    FindingSeverity.CRITICAL,
+                    "Beregningen kan ikke brukes til oppgjør",
+                    runtimeFailureDetail ?: "Gå tilbake til arbeidsplanen og kontroller registreringene.",
+                )
+            }
+        }
+        return
+    }
     // State-based TextFields own text, cursor, selection and IME composition.
     // The outer draft state is mirrored from snapshotFlow and no longer drives
     // the live editor on every keystroke.
@@ -4914,12 +5021,15 @@ private fun ControlScreen(
     rosterGapEvidence: List<CalculationEvidence>,
     rosterGapConfirmed: Boolean,
     onRosterGapConfirmed: (Boolean) -> Unit,
-    settlementSummary: SettlementSummary,
+    settlementSummary: SettlementSummary?,
+    controlRateSet: app.ferietur.domain.TariffRateSet?,
+    runtimeFailureDetail: String?,
 ) {
     val blocks = TripPlanEngine.projectRange(dates, plans)
-    val unresolved = settlementSummary.unresolvedRuleCount
-    val rateSet = tariffRateSetForRange(dates.first(), dates.last())
-    val findings = TripPlanEngine.controlFindings(blocks, unresolved, roster, rateSet)
+    val unresolved = settlementSummary?.unresolvedRuleCount ?: 0
+    val findings = controlRateSet?.let { rateSet ->
+        TripPlanEngine.controlFindings(blocks, unresolved, roster, rateSet)
+    }.orEmpty()
     val reviewCount = findings.count {
         it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL
     }
@@ -4958,6 +5068,17 @@ private fun ControlScreen(
     ) {
         item { ScreenHeader("Kontroll", stepLabel, onBack) }
 
+        if (settlementSummary == null || controlRateSet == null) {
+            item {
+                InlineMessage(
+                    FindingSeverity.CRITICAL,
+                    "Kontrollgrunnlaget kan ikke ferdigstilles",
+                    runtimeFailureDetail
+                        ?: "Tariffperiodene har ikke ett entydig felles arbeidstidsgrunnlag. Ferietur stopper ferdigstillingen fremfor å blande kontrollregler.",
+                )
+            }
+        }
+
         if (employerKind != EmployerKind.OSLO_KOMMUNE) {
             item {
                 InlineMessage(
@@ -4968,8 +5089,10 @@ private fun ControlScreen(
             }
         }
 
-        item {
-            ControlSettlementStatusRow(settlementSummary)
+        settlementSummary?.let { summary ->
+            item {
+                ControlSettlementStatusRow(summary)
+            }
         }
 
         if (rosterGapEvidence.isNotEmpty()) {
@@ -5039,64 +5162,67 @@ private fun ControlScreen(
             }
         }
 
-        item {
-            Text(
-                if (reviewCount == 0) {
-                    "Ingen forhold krever særskilt vurdering"
-                } else {
-                    "$reviewCount forhold bør vurderes"
-                },
-                modifier = Modifier.semantics { heading() },
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold,
-            )
-        }
-
-        if (groupedFindings.isEmpty()) {
+        if (controlRateSet != null) {
             item {
-                ListItem(
-                    leadingContent = {
-                        Icon(
-                            Icons.Rounded.CheckCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+                Text(
+                    if (reviewCount == 0) {
+                        "Ingen forhold krever særskilt vurdering"
+                    } else {
+                        "$reviewCount forhold bør vurderes"
                     },
-                    supportingContent = {
-                        Text(
-                            "Den registrerte planen utløser ingen av kontrollkategoriene.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    content = {
-                        Text(
-                            "Ingen åpenbare arbeidstidsvarsler",
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    },
+                    modifier = Modifier.semantics { heading() },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
                 )
             }
-        } else {
-            itemsIndexed(groupedFindings, key = { _, group -> group.title }) { index, group ->
-                ControlFindingSummaryRow(
-                    group = group,
-                    onClick = {
-                        selectedGroupTitle = group.title
-                        selectedFindingIndex = if (group.findings.size == 1) 0 else null
-                    },
-                )
-                if (index != groupedFindings.lastIndex) {
-                    HorizontalDivider(modifier = Modifier.padding(start = 46.dp))
+
+            if (groupedFindings.isEmpty()) {
+                item {
+                    ListItem(
+                        leadingContent = {
+                            Icon(
+                                Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                "Den registrerte planen utløser ingen av kontrollkategoriene.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        content = {
+                            Text(
+                                "Ingen åpenbare arbeidstidsvarsler",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        },
+                    )
+                }
+            } else {
+                itemsIndexed(groupedFindings, key = { _, group -> group.title }) { index, group ->
+                    ControlFindingSummaryRow(
+                        group = group,
+                        onClick = {
+                            selectedGroupTitle = group.title
+                            selectedFindingIndex = if (group.findings.size == 1) 0 else null
+                        },
+                    )
+                    if (index != groupedFindings.lastIndex) {
+                        HorizontalDivider(modifier = Modifier.padding(start = 46.dp))
+                    }
                 }
             }
         }
 
-        if (settlementSummary.unresolvedRules.isNotEmpty()) {
+        val unresolvedRules = settlementSummary?.unresolvedRules.orEmpty()
+        if (unresolvedRules.isNotEmpty()) {
             item {
                 MethodSectionHeading("Regler som må avklares")
             }
             items(
-                settlementSummary.unresolvedRules,
+                unresolvedRules,
                 key = { "control-rule-${it.id}" },
             ) { rule ->
                 RuleCompactCard(rule.title, rule.source)
@@ -8378,79 +8504,26 @@ private fun splitTravelLeg(start: LocalDateTime, end: LocalDateTime, kind: TimeK
 private fun mergePlanMaps(base: Map<LocalDate, List<PlannedBlock>>, extra: Map<LocalDate, List<PlannedBlock>>): Map<LocalDate, List<PlannedBlock>> =
     (base.keys + extra.keys).associateWith { date -> base[date].orEmpty() + extra[date].orEmpty() }
 
-private fun checkedPreliminaryCalculation(
-    fundingMode: FundingMode,
-    dates: List<LocalDate>,
-    roster: Map<LocalDate, String>,
-    plans: Map<LocalDate, List<PlannedBlock>>,
-    annualSalary: BigDecimal,
-    weeklyBasis: WeeklyBasis,
-    weekendProfile: WeekendProfile,
-    tripStart: LocalDateTime,
-    tripEnd: LocalDateTime,
-): app.ferietur.domain.PreliminaryCalculation {
-    TripDateRangePolicy.requireCompleteCoverage(
-        dates = dates,
-        start = tripStart.toLocalDate(),
-        end = tripEnd.toLocalDate(),
-    )
-    val tariffContext = FerieturTariffResolver.requireSupportedRange(
-        start = tripStart.toLocalDate(),
-        end = tripEnd.toLocalDate(),
-    )
-    val rateSet = tariffContext.rateSet
-    return TripPlanEngine.calculatePreliminary(
-        fundingMode = fundingMode,
-        dates = dates,
-        roster = roster,
-        plans = plans,
-        annualSalary = annualSalary,
-        weeklyBasis = weeklyBasis,
-        weekendProfile = weekendProfile,
-        tripStart = tripStart,
-        tripEnd = tripEnd,
-        rateSet = rateSet,
-    )
-}
-
-private fun tariffRateSetForRange(start: LocalDate, end: LocalDate): app.ferietur.domain.TariffRateSet =
-    FerieturTariffResolver.requireSupportedRange(start, end).rateSet
-
 private fun settlementSummary(
-    fundingMode: FundingMode,
-    dates: List<LocalDate>,
-    roster: Map<LocalDate, String>,
-    plans: Map<LocalDate, List<PlannedBlock>>,
-    annualSalary: BigDecimal,
-    weeklyBasis: WeeklyBasis,
-    weekendProfile: WeekendProfile,
-    tripStart: LocalDateTime,
-    tripEnd: LocalDateTime,
+    calculation: TariffRuntimeCalculation,
     mode: SettlementMode,
     customAmountText: String,
     reason: String,
 ): SettlementSummary {
-    val result = checkedPreliminaryCalculation(
-        fundingMode = fundingMode,
-        dates = dates,
-        roster = roster,
-        plans = plans,
-        annualSalary = annualSalary,
-        weeklyBasis = weeklyBasis,
-        weekendProfile = weekendProfile,
-        tripStart = tripStart,
-        tripEnd = tripEnd,
-    )
     val custom = customAmountText.toNorwegianMoneyOrNull()
-    val proposed = if (mode == SettlementMode.FULL_CALCULATION) result.paymentBasisAmount else custom ?: result.paymentBasisAmount
+    val proposed = if (mode == SettlementMode.FULL_CALCULATION) {
+        calculation.paymentBasisAmount
+    } else {
+        custom ?: calculation.paymentBasisAmount
+    }
     return SettlementSummary(
-        calculatedAmount = result.paymentBasisAmount,
+        calculatedAmount = calculation.paymentBasisAmount,
         proposedAmount = proposed,
         usesFullCalculation = mode == SettlementMode.FULL_CALCULATION,
         reason = reason.trim(),
-        alreadyCoveredByNormalRosterAmount = result.alreadyCoveredByNormalRosterAmount,
-        fullKnownCalculationAmount = result.knownAmount,
-        unresolvedRules = FerieturRules.applicableUnresolvedRules(result),
+        alreadyCoveredByNormalRosterAmount = calculation.alreadyCoveredByNormalRosterAmount,
+        fullKnownCalculationAmount = calculation.knownAmount,
+        unresolvedRules = FerieturRules.applicableUnresolvedRules(calculation.applicableUnresolvedRuleIds),
     )
 }
 

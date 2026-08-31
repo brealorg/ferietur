@@ -633,3 +633,45 @@ context exists.
 The live Compose calculation/finalization flow remains on the existing
 single-context path in A4A9. A4A10 may wire the A4A6 runtime gateway into the
 flow only after this presentation/finalization bridge has qualified.
+
+## A4A10 — Compose runtime wiring
+
+The live calculation flow now enters through `FerieturTariffRuntimeCalculator`
+instead of requiring one tariff/salary context for the entire trip.
+
+- the trip-date gate uses the half-open effective-date segment planner;
+- single-context trips keep the qualified existing calculation path;
+- supported pure rate/salary-table boundaries use the segmented monetary path;
+- unsupported semantic or whole-trip allocation cases remain fail-closed;
+- live calculation rows use stable presentation keys so the same line ID can
+  occur in multiple tariff slices without LazyColumn key collisions;
+- the live rules sheet shows every effective salary/hourly-rate context rather
+  than inventing one blended hourly rate;
+- control/finalization requires one coherent shared worktime-control parameter
+  set across contexts;
+- finalization now calls `FinalizedTripSnapshotBuilder.buildFromRuntime`, so the
+  v4 calculation payload and all tariff contexts are frozen from the exact live
+  runtime result.
+
+`TariffRuntimeCalculationPresentations` supplies the common live UI surface for
+single and segmented calculations. `TripPlanEngine.buildWorktimeAudit` provides
+non-monetary roster/worktime metrics for a segmented live result without
+re-running money through one arbitrary tariff rate set.
+
+
+## A4A10R1 – segmented PDF presentation hardening
+
+Device qualification of Scenario B exposed two presentation-only defects while
+the segmented monetary calculation itself remained correct.
+
+Segment-local PDF line titles now derive their date label from frozen
+calculation evidence rather than from the tariff/lønn context period.
+Tariff/lønn-perioden remains separate provenance under
+`Tariff- og lønnskontekster`.
+
+The full-PDF `Opprettet / beregning-ID` traceability metadata is rendered in a
+fixed footer on the final page, outside the flowing content area, so it cannot
+create a metadata-only trailing page.
+
+Short-PDF ordering, calculation formulas, runtime segmentation, snapshot v4 and
+Compose calculation flow are unchanged.

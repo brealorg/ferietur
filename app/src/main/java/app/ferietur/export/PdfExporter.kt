@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
 import app.ferietur.domain.CalculationCertainty
+import app.ferietur.domain.CalculationEvidence
 import app.ferietur.domain.CalculationLine
 import app.ferietur.domain.ControlFinding
 import app.ferietur.domain.DomainRule
@@ -453,7 +454,7 @@ object PdfExporter {
         } else {
             w.footerMeta("Tariffkontekster: ${s.tariffContexts.size} · se periodene over for sats- og lønnstabell-ID-er")
         }
-        w.footerMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")
+        w.finalFooterMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")
     }
 
     private fun employerLabel(value: EmployerKind): String = when (value) {
@@ -477,9 +478,36 @@ object PdfExporter {
         if (!snapshot.hasMultipleTariffContexts || entry.scope != TariffCalculationLineScope.SEGMENT_LOCAL) {
             return base
         }
-        val context = entry.tariffContextIndex?.let(snapshot.tariffContexts::getOrNull) ?: return base
-        val period = if (context.start == context.end) date(context.start) else "${date(context.start)}–${date(context.end)}"
-        return "$base · $period"
+        val workPeriod = evidenceDateLabelForPdf(entry.line.evidence) ?: return base
+        return "$base · $workPeriod"
+    }
+
+    /**
+     * Arbeidsdato kommer fra det fryste beregningsevidenset.
+     * Tariff-/lønnskontekstens datoer beskriver prisgrunnlaget, ikke
+     * nødvendigvis når arbeid faktisk ble utført.
+     *
+     * Evidensintervaller er halvåpne: et intervall som slutter nøyaktig
+     * kl. 00:00 opptar ikke den påfølgende kalenderdagen.
+     */
+    internal fun evidenceDateLabelForPdf(
+        evidence: List<CalculationEvidence>,
+    ): String? {
+        val occupiedRanges = evidence.mapNotNull { item ->
+            if (!item.end.isAfter(item.start)) return@mapNotNull null
+            item.start.toLocalDate() to item.end.minusNanos(1).toLocalDate()
+        }
+
+        if (occupiedRanges.isEmpty()) return null
+
+        val first = occupiedRanges.minOf { it.first }
+        val last = occupiedRanges.maxOf { it.second }
+
+        return if (first == last) {
+            date(first)
+        } else {
+            "${date(first)}–${date(last)}"
+        }
     }
 
     private fun presentationLineExplanation(
@@ -803,11 +831,18 @@ private class PdfWriter(private val document: PdfDocument) {
     private var pageNo = 0
     private var page: PdfDocument.Page? = null
     private var y = 0f
+    private var finalFooter: String? = null
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(35, 35, 35) }
 
     init { newPage() }
 
-    fun finish() { page?.let(document::finishPage); page = null }
+    fun finish() {
+        page?.let { current ->
+            finalFooter?.let(::drawFinalFooter)
+            document.finishPage(current)
+        }
+        page = null
+    }
     fun pageBreak() { page?.let(document::finishPage); page = null; newPage() }
     fun space(px: Int) { ensure(px.toFloat()); y += px }
     fun documentLabel(text: String) = text(text, 8.3f, true, 5f, Color.rgb(92, 98, 108))
@@ -817,6 +852,7 @@ private class PdfWriter(private val document: PdfDocument) {
     fun p(text: String) = text(text, 9.6f, false, 4f, Color.rgb(45, 48, 54))
     fun smallText(text: String) = text(text, 8.6f, false, 3f, Color.rgb(77, 82, 91))
     fun footerMeta(text: String) = text(text, 7.8f, false, 2f, Color.rgb(102, 107, 116))
+    fun finalFooterMeta(text: String) { finalFooter = text }
     fun bullet(text: String) = text("- $text", 8.7f, false, 1.5f, Color.rgb(58, 63, 72))
 
     fun summaryAmount(label: String, amount: BigDecimal, sideLabel: String, sideValue: String) {
@@ -1130,6 +1166,21 @@ private class PdfWriter(private val document: PdfDocument) {
         paint.color = color
         val x = rightX - paint.measureText(text)
         page!!.canvas.drawText(text, x, baseline, paint)
+    }
+
+    private fun drawFinalFooter(text: String) {
+        paint.color = Color.rgb(218, 221, 226)
+        paint.strokeWidth = 0.8f
+        page!!.canvas.drawLine(left, bottom + 5f, right, bottom + 5f, paint)
+
+        drawTextAt(
+            text,
+            left,
+            height - 16f,
+            7.2f,
+            false,
+            Color.rgb(102, 107, 116),
+        )
     }
 
     private fun ensure(required: Float) {
