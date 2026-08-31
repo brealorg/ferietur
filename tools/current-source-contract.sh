@@ -20,6 +20,7 @@ for f in \
     app/src/main/java/app/ferietur/domain/TariffCatalog.kt \
     app/src/main/java/app/ferietur/domain/TariffRateSet.kt \
     app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+    app/src/main/java/app/ferietur/domain/TariffCatalogResolverAdapter.kt \
     app/src/main/java/app/ferietur/domain/TariffSegmentation.kt \
     app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt \
     app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt \
@@ -54,6 +55,7 @@ engine = (root/'app/src/main/java/app/ferietur/domain/TripPlanEngine.kt').read_t
 tariff_catalog = (root/'app/src/main/java/app/ferietur/domain/TariffCatalog.kt').read_text(encoding='utf-8')
 tariff_rates = (root/'app/src/main/java/app/ferietur/domain/TariffRateSet.kt').read_text(encoding='utf-8')
 tariff_resolution = (root/'app/src/main/java/app/ferietur/domain/TariffResolution.kt').read_text(encoding='utf-8')
+tariff_resolver_adapter = (root/'app/src/main/java/app/ferietur/domain/TariffCatalogResolverAdapter.kt').read_text(encoding='utf-8')
 tariff_segmentation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentation.kt').read_text(encoding='utf-8')
 tariff_segment_calculation = (root/'app/src/main/java/app/ferietur/domain/TariffSegmentCalculation.kt').read_text(encoding='utf-8')
 tariff_whole_trip_scope = (root/'app/src/main/java/app/ferietur/domain/TariffWholeTripScope.kt').read_text(encoding='utf-8')
@@ -204,7 +206,18 @@ req('class TariffCalculationSliceBuilder' in tariff_segment_calculation, 'segmen
 req('WORK_BLOCK_OUTSIDE_TRIP' in tariff_segment_calculation, 'silent_outside_trip_clipping_guard_missing')
 req('TariffMath.hourlyRate(annualSalary, weeklyBasis, segment.rateSet)' in tariff_segment_calculation, 'per_segment_hourly_rate_resolution_missing')
 req('annualSalaryForTable' in salary_tables, 'frozen_salary_table_lookup_missing')
-req('fun planSegments(tripStart: LocalDateTime, tripEnd: LocalDateTime)' in tariff_resolution, 'datetime_segment_planner_missing')
+req(
+    (
+        'fun planSegments(tripStart: LocalDateTime, tripEnd: LocalDateTime)' in tariff_resolution
+    )
+    or (
+        'tripStart: LocalDateTime' in tariff_resolver_adapter
+        and 'tripEnd: LocalDateTime' in tariff_resolver_adapter
+        and 'TariffEffectiveDateRange' in tariff_resolver_adapter
+        and 'delegate.planSegments(' in tariff_resolution
+    ),
+    'datetime_segment_planner_missing',
+)
 print('CURRENT_TARIFF_SEGMENT_INPUT_CONTRACT=PASS')
 projected_core_start = engine.find('fun calculatePreliminaryFromProjectedBlocks(')
 projected_core_end = engine.find('\n    fun rosterUncoveredEvidence(', projected_core_start)
@@ -800,14 +813,57 @@ grep -Fq 'TariffSegmentPlanner(' \
   exit 1
 }
 
+# A5A7 intentionally wires the qualified adapter into TariffResolution using
+# FerieturGlobalRuntimeCatalogView. The remaining hard boundary is that neither
+# the runtime calculator nor TripPlanEngine may consume the injectable catalog
+# view yet.
 if rg -q \
-  'TariffCatalogResolverAdapter|TariffRuntimeCatalogView|FerieturGlobalRuntimeCatalogView' \
-  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  'TariffCatalogResolverAdapter|TariffRuntimeCatalogView|FerieturGlobalRuntimeCatalogView|TariffRuntimeCatalogSnapshotView' \
   app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt \
   app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
 then
-  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_PREMATURE_LIVE_WIRING"
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_PREMATURE_CALCULATOR_WIRING"
   exit 1
 fi
 
 echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=PASS"
+
+TARIFF_RESOLUTION="app/src/main/java/app/ferietur/domain/TariffResolution.kt"
+TARIFF_RESOLVER_DELEGATION_TEST="app/src/test/java/app/ferietur/domain/TariffResolverDelegationTest.kt"
+
+[[ -f "$TARIFF_RESOLVER_DELEGATION_TEST" ]] || {
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'private val delegate =' "$TARIFF_RESOLUTION" || {
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_DELEGATE"
+  exit 1
+}
+
+grep -Fq 'TariffCatalogResolverAdapter(' "$TARIFF_RESOLUTION" || {
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_ADAPTER"
+  exit 1
+}
+
+grep -Fq 'FerieturGlobalRuntimeCatalogView' "$TARIFF_RESOLUTION" || {
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_GLOBAL_VIEW"
+  exit 1
+}
+
+if rg -q \
+  'FerieturTariffs\.|FerieturTariffRates\.|OsloSalaryTables\.|TariffSegmentPlanner\(' \
+  "$TARIFF_RESOLUTION"
+then
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_DIRECT_CATALOG_LOOKUP_REMAINS"
+  exit 1
+fi
+
+grep -Fq \
+  'Ingen komplett verifisert kombinasjon av tariffpakke, satssett og lønnstabell' \
+  "$TARIFF_RESOLUTION" || {
+  echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=FAIL_FAIL_CLOSED_MESSAGE"
+  exit 1
+}
+
+echo "CURRENT_TARIFF_RESOLVER_DELEGATION_CONTRACT=PASS"

@@ -859,3 +859,37 @@ Across the synthetic salary boundary:
 - only salary-table identity and salary amount change.
 
 This establishes an injectable resolver boundary before any production wiring.
+
+## A5A7 – production resolver delegation
+
+A5A7 is the first production-path refactor in the A5 update architecture.
+
+`FerieturTariffResolver` retains its existing public API but delegates tariff
+resolution and segmentation to:
+
+`TariffCatalogResolverAdapter(FerieturGlobalRuntimeCatalogView)`.
+
+The global view exposes exactly the same existing built-in tariff package, rate
+set and salary table as before. No A5 candidate or isolated snapshot is wired
+into production.
+
+The refactor therefore changes implementation structure only:
+
+- no new tariff package;
+- no new salary table;
+- no supported-date extension;
+- no calculation formula change;
+- no runtime-calculator change.
+
+Parity tests compare the production resolver directly with the adapter across
+representative supported and unsupported ranges.
+
+The half-open midnight boundary is also locked:
+
+- a trip ending exactly at 1 May 2027 00:00 occupies only 30 April and remains
+  segmentable with current verified data;
+- a trip continuing to 00:01 occupies 1 May and therefore still fails closed
+  because the live salary catalog has no verified table for that date.
+
+A5A7 establishes the production delegation seam without activating future
+catalog data.
