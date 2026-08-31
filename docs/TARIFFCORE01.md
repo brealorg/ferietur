@@ -824,3 +824,38 @@ A synthetic boundary test proves:
 
 A5A5 therefore validates future runtime behavior without activating future data
 in the application.
+
+## A5A6 – injectable resolver adapter
+
+A5A6 extracts the read-only data surface needed by tariff resolution into
+`TariffRuntimeCatalogView`.
+
+Two implementations are provided:
+
+- `FerieturGlobalRuntimeCatalogView`, which delegates to today's existing
+  production singletons;
+- `TariffRuntimeCatalogSnapshotView`, which delegates to an isolated A5A5
+  typed catalog snapshot.
+
+`TariffCatalogResolverAdapter` applies the existing strict single-context and
+segmented planning semantics to either view.
+
+A5A6 deliberately does not replace or modify `FerieturTariffResolver`.
+The existing production resolver remains the live application path.
+
+Parity tests prove that the adapter backed by today's global catalogs returns
+the same current tariff/rate/salary context as `FerieturTariffResolver`.
+
+An isolated synthetic salary update additionally proves that the same resolver
+logic can see a new 1 May 2027 salary table while the global resolver remains
+unsupported on that date.
+
+Across the synthetic salary boundary:
+
+- strict single-context resolution fails, as expected;
+- segmented planning succeeds;
+- tariff package identity remains unchanged;
+- rate-set identity remains unchanged;
+- only salary-table identity and salary amount change.
+
+This establishes an injectable resolver boundary before any production wiring.

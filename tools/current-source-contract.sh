@@ -756,3 +756,58 @@ then
 fi
 
 echo "CURRENT_TARIFF_RUNTIME_CATALOG_SNAPSHOT_CONTRACT=PASS"
+
+TARIFF_CATALOG_RESOLVER_ADAPTER="app/src/main/java/app/ferietur/domain/TariffCatalogResolverAdapter.kt"
+TARIFF_CATALOG_RESOLVER_ADAPTER_TEST="app/src/test/java/app/ferietur/domain/TariffCatalogResolverAdapterTest.kt"
+
+[[ -f "$TARIFF_CATALOG_RESOLVER_ADAPTER" ]] || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_MAIN_FILE"
+  exit 1
+}
+
+[[ -f "$TARIFF_CATALOG_RESOLVER_ADAPTER_TEST" ]] || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_TEST_FILE"
+  exit 1
+}
+
+grep -Fq 'interface TariffRuntimeCatalogView' \
+  "$TARIFF_CATALOG_RESOLVER_ADAPTER" || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_VIEW_INTERFACE"
+  exit 1
+}
+
+grep -Fq 'object FerieturGlobalRuntimeCatalogView' \
+  "$TARIFF_CATALOG_RESOLVER_ADAPTER" || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_GLOBAL_VIEW"
+  exit 1
+}
+
+grep -Fq 'class TariffRuntimeCatalogSnapshotView(' \
+  "$TARIFF_CATALOG_RESOLVER_ADAPTER" || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_SNAPSHOT_VIEW"
+  exit 1
+}
+
+grep -Fq 'class TariffCatalogResolverAdapter(' \
+  "$TARIFF_CATALOG_RESOLVER_ADAPTER" || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_RESOLVER_ADAPTER"
+  exit 1
+}
+
+grep -Fq 'TariffSegmentPlanner(' \
+  "$TARIFF_CATALOG_RESOLVER_ADAPTER" || {
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_SEGMENT_PLANNER"
+  exit 1
+}
+
+if rg -q \
+  'TariffCatalogResolverAdapter|TariffRuntimeCatalogView|FerieturGlobalRuntimeCatalogView' \
+  app/src/main/java/app/ferietur/domain/TariffResolution.kt \
+  app/src/main/java/app/ferietur/domain/TariffRuntimeCalculation.kt \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=FAIL_PREMATURE_LIVE_WIRING"
+  exit 1
+fi
+
+echo "CURRENT_TARIFF_CATALOG_RESOLVER_ADAPTER_CONTRACT=PASS"
