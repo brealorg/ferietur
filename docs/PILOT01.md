@@ -60,3 +60,66 @@ For Oslo-tabellen blir resultatet:
 Dette er kun en presentasjonsendring. Lønnstabell-ID, årslønn,
 gyldighetsperiode og beregning endres ikke.
 
+## PILOT01-003 — visuell arbeidstidskontroll i PDF
+
+Solgården-piloten viste at den eksisterende arbeidstidskontrollen var
+matematisk forståelig, men presentasjonen kunne gi inntrykk av at en
+23- eller 24-timers sammenhengende arbeidsperiode var likebetydende med
+23 eller 24 timer aktivt arbeid.
+
+PDF-en presenterer derfor lange sammenhengende arbeidsperioder som visuelle
+kort når den fryste arbeidsplanen kan projiseres uten semantisk tap.
+
+Kortene viser:
+
+- samlet sammenhengende arbeidstid;
+- start og slutt;
+- en proporsjonal tidslinje;
+- registrerte tidstyper og varighet for hver del;
+- særskilt markering av hvilende nattevakt, aktivt arbeid og reise med ansvar.
+
+For Solgården viser den siste perioden eksplisitt:
+
+- 8 t hvilende nattevakt;
+- 9 t aktivt arbeid;
+- 7 t reise med ansvar;
+- totalt 24 t sammenhengende arbeidstid.
+
+Arbeidstidskontrollens regler, terskler og antall funn endres ikke.
+Hvis PDF-presentasjonen ikke kan representere en spesiell
+reise-/turnuskombinasjon sikkert, brukes den eksisterende tekstpresentasjonen
+i stedet.
+
+PILOT01-003 er dermed en dokument-/presentasjonsendring, ikke en endring i
+beregning, tariff eller arbeidstidskontroll.
+
+### PILOT01-003R1 — kompakt presentasjon av enkelttypeperioder
+
+Pilotrenderingen viste at lange perioder som består av bare én registrert
+tidstype ikke trenger samme visuelle plass som perioder som kombinerer flere
+tidstyper.
+
+Enkelttypeperioder presenteres derfor som kompakte rader med varighet,
+tidsrom og tidstype. Sammensatte perioder beholder de store tidslinjekortene.
+
+For Solgården betyr dette at de tre 15-timersperiodene med bare aktivt arbeid
+vises kompakt, mens de tre 23-timersperiodene og den avsluttende
+24-timersperioden fortsatt visualiseres med tidslinje og sammensetning.
+
+Endringen påvirker kun PDF-presentasjonen. Arbeidstidskontroll, antall funn,
+beregningslogikk, tariff og snapshotformat er uendret.
+
+### PILOT01-003R2 — siste PDF-polering
+
+Den endelige pilotrenderingen bruker mer direkte språk i
+arbeidstidsseksjonen. Forklaringen sier nå at når en arbeidsperiode består av
+flere registrerte tidstyper, vises de hver for seg.
+
+Dato- og tidslinjen på de visuelle kortene bruker tydelige norske
+forkortelser, punktum og pil, for eksempel:
+
+`fre. 14. aug. 23:00 → lør. 15. aug. 22:00`
+
+Dette er kun tekst- og presentasjonspolering. Beregning,
+arbeidstidskontroll, tariff, antall funn og snapshotformat er uendret.
+

@@ -1049,3 +1049,57 @@ then
 fi
 
 echo "CURRENT_PILOT01_002_SALARY_TABLE_PDF_CONTRACT=PASS"
+
+
+# PILOT01-003
+#
+# Long work-time findings remain domain-owned. PdfExporter may visualize
+# already-frozen WorkBlocks, but special cases must fall back rather than
+# inventing a different work-time interpretation.
+if ! rg -q \
+  'fun longWorktimePeriodsForPdf' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=FAIL_PROJECTION"
+  exit 1
+fi
+
+if ! rg -q \
+  'fun worktimePeriodGrid' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=FAIL_GRID"
+  exit 1
+fi
+
+if ! rg -Fq \
+  '"Dette betyr ikke "' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt ||
+   ! rg -Fq \
+  '"${worktimeDurationLabel(period.minutes)} aktivt arbeid."' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=FAIL_CLARIFICATION"
+  exit 1
+fi
+
+if ! rg -q \
+  'visualPeriods.size == longPeriods.size' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=FAIL_FAIL_CLOSED"
+  exit 1
+fi
+
+if ! rg -q \
+  'fun isCompactWorktimePeriodForPdf' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt ||
+   ! rg -q \
+  'fun worktimeCompactPeriods' \
+  app/src/main/java/app/ferietur/export/PdfExporter.kt
+then
+  echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=FAIL_COMPACT_SINGLE_TYPE_PERIODS"
+  exit 1
+fi
+
+echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=PASS"

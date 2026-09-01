@@ -5,12 +5,15 @@ import app.ferietur.domain.CalculationLine
 import app.ferietur.domain.PaymentTreatment
 import app.ferietur.domain.FerieturTariffRates
 import app.ferietur.domain.RosterComparisonMode
+import app.ferietur.domain.TimeKind
+import app.ferietur.domain.WorkBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
 import java.time.LocalTime
+import java.time.LocalDateTime
 
 class PdfExporterPolicyTest {
 
@@ -188,6 +191,148 @@ class PdfExporterPolicyTest {
         assertEquals(
             "Betalingsscenarioet brukes i betalingsforslaget og dokumentasjonen. Det endrer ikke selve beregningen og fastsetter ikke hvem som rettslig skal bære kostnaden.",
             PAYMENT_SCENARIO_DISCLAIMER,
+        )
+    }
+
+    @Test
+    fun worktimeVisualProjectionPreservesSolgardenLongPeriodComposition() {
+        fun dt(
+            day: Int,
+            hour: Int,
+        ) = LocalDateTime.of(
+            2026,
+            8,
+            day,
+            hour,
+            0,
+        )
+
+        val blocks = listOf(
+            WorkBlock(
+                dt(12, 7),
+                dt(12, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(13, 7),
+                dt(13, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(14, 7),
+                dt(14, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(14, 23),
+                dt(15, 7),
+                TimeKind.RESTING_NIGHT_WATCH,
+            ),
+            WorkBlock(
+                dt(15, 7),
+                dt(15, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(15, 23),
+                dt(16, 7),
+                TimeKind.RESTING_NIGHT_WATCH,
+            ),
+            WorkBlock(
+                dt(16, 7),
+                dt(16, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(16, 23),
+                dt(17, 7),
+                TimeKind.RESTING_NIGHT_WATCH,
+            ),
+            WorkBlock(
+                dt(17, 7),
+                dt(17, 22),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(17, 23),
+                dt(18, 7),
+                TimeKind.RESTING_NIGHT_WATCH,
+            ),
+            WorkBlock(
+                dt(18, 7),
+                dt(18, 16),
+                TimeKind.ACTIVE_WORK,
+            ),
+            WorkBlock(
+                dt(18, 16),
+                dt(18, 23),
+                TimeKind.TRAVEL_WITH_RESPONSIBILITY,
+            ),
+        )
+
+        val periods =
+            PdfExporter.longWorktimePeriodsForPdf(blocks)
+
+        assertEquals(
+            listOf(
+                15L * 60L,
+                15L * 60L,
+                15L * 60L,
+                23L * 60L,
+                23L * 60L,
+                23L * 60L,
+                24L * 60L,
+            ),
+            periods.map { it.minutes },
+        )
+
+        assertEquals(
+            listOf(
+                true,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+            ),
+            periods.map(
+                PdfExporter::isCompactWorktimePeriodForPdf,
+            ),
+        )
+
+        val firstMixed = periods[3]
+        assertEquals(
+            listOf(
+                TimeKind.RESTING_NIGHT_WATCH,
+                TimeKind.ACTIVE_WORK,
+            ),
+            firstMixed.segments.map { it.kind },
+        )
+        assertEquals(
+            listOf(
+                8L * 60L,
+                15L * 60L,
+            ),
+            firstMixed.segments.map { it.minutes },
+        )
+
+        val finalPeriod = periods.last()
+        assertEquals(
+            listOf(
+                TimeKind.RESTING_NIGHT_WATCH,
+                TimeKind.ACTIVE_WORK,
+                TimeKind.TRAVEL_WITH_RESPONSIBILITY,
+            ),
+            finalPeriod.segments.map { it.kind },
+        )
+        assertEquals(
+            listOf(
+                8L * 60L,
+                9L * 60L,
+                7L * 60L,
+            ),
+            finalPeriod.segments.map { it.minutes },
         )
     }
 

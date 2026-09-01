@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
@@ -43,6 +44,110 @@ internal const val PAYMENT_SCENARIO_DISCLAIMER = "Betalingsscenarioet brukes i b
 object PdfExporter {
 
     enum class Variant { SHORT, FULL }
+
+    internal data class PdfWorktimeSegment(
+        val kind: TimeKind,
+        val start: java.time.LocalDateTime,
+        val end: java.time.LocalDateTime,
+    ) {
+        val minutes: Long
+            get() = java.time.temporal.ChronoUnit.MINUTES.between(start, end)
+    }
+
+    internal data class PdfWorktimePeriod(
+        val start: java.time.LocalDateTime,
+        val end: java.time.LocalDateTime,
+        val segments: List<PdfWorktimeSegment>,
+    ) {
+        val minutes: Long
+            get() = java.time.temporal.ChronoUnit.MINUTES.between(start, end)
+    }
+
+    /**
+     * PDF-only projection of the primary registered work periods.
+     *
+     * This does not decide whether a work-time arrangement is lawful and does
+     * not alter TripPlanEngine.controlFindings(). It is used only when the PDF
+     * can represent the already-produced long-period findings without semantic
+     * loss. Unsupported/special travel cases fall back to the existing textual
+     * finding presentation.
+     */
+    internal fun longWorktimePeriodsForPdf(
+        blocks: List<WorkBlock>,
+    ): List<PdfWorktimePeriod> {
+        val relevant = blocks
+            .filter { block ->
+                block.kind == TimeKind.ACTIVE_WORK ||
+                    block.kind == TimeKind.ACTIVE_NIGHT_WATCH ||
+                    block.kind == TimeKind.RESTING_NIGHT_WATCH ||
+                    block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY
+            }
+            .sortedWith(
+                compareBy<WorkBlock> { it.start }
+                    .thenBy { it.end },
+            )
+
+        if (relevant.isEmpty()) return emptyList()
+
+        val groups = mutableListOf<MutableList<WorkBlock>>()
+        var current = mutableListOf(relevant.first())
+        var currentEnd = relevant.first().end
+
+        relevant.drop(1).forEach { block ->
+            if (block.start.isAfter(currentEnd)) {
+                groups += current
+                current = mutableListOf(block)
+                currentEnd = block.end
+            } else {
+                current += block
+                if (block.end.isAfter(currentEnd)) {
+                    currentEnd = block.end
+                }
+            }
+        }
+        groups += current
+
+        return groups.mapNotNull { group ->
+            val start = group.minOf { it.start }
+            val end = group.maxOf { it.end }
+            val periodMinutes =
+                java.time.temporal.ChronoUnit.MINUTES.between(start, end)
+
+            if (periodMinutes <= 13L * 60L) {
+                return@mapNotNull null
+            }
+
+            val segments = mutableListOf<PdfWorktimeSegment>()
+
+            group.sortedBy { it.start }.forEach { block ->
+                val previous = segments.lastOrNull()
+                if (
+                    previous != null &&
+                    previous.kind == block.kind &&
+                    previous.end == block.start
+                ) {
+                    segments[segments.lastIndex] =
+                        previous.copy(end = block.end)
+                } else {
+                    segments += PdfWorktimeSegment(
+                        kind = block.kind,
+                        start = block.start,
+                        end = block.end,
+                    )
+                }
+            }
+
+            PdfWorktimePeriod(
+                start = start,
+                end = end,
+                segments = segments,
+            )
+        }
+    }
+
+    internal fun isCompactWorktimePeriodForPdf(
+        period: PdfWorktimePeriod,
+    ): Boolean = period.segments.size == 1
 
     internal fun createBlocking(context: Context, snapshot: FinalizedTripSnapshot, variant: Variant): File {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -367,33 +472,125 @@ object PdfExporter {
         w.smallText("Dagsbeløp fordeles til øre slik at de summerer tilbake til hovedpostene. Små avrundingsforskjeller kan derfor forekomme på enkeltdager.")
     }
 
-    private fun writeGroupedControl(w: PdfWriter, s: FinalizedTripSnapshot, rateSet: TariffRateSet, includeDetails: Boolean) {
-        val calculation = s.presentation
+    private fun writeGroupedControl(
+        w: PdfWriter,
+        s: FinalizedTripSnapshot,
+        rateSet: TariffRateSet,
+        includeDetails: Boolean,
+    ) {
+        if (includeDetails) {
+            // PILOT01-003: give the human-facing work-time audit its own
+            // document surface instead of continuing a dense bullet list.
+            w.pageBreak()
+        }
+
         w.h1("Arbeidstid som bør vurderes")
-        w.p("Appen viser forhold i arbeidsplanen som bør kontrolleres mot arbeidstidsordningen som gjelder. Den avgjør ikke om arbeidsordningen er lovlig.")
-        w.compactNote("Hvilende nattevakt og arbeidstid", "Hvilende nattevakt regnes som arbeidstid når arbeidstiden kontrolleres, selv om betalingen beregnes annerledes.")
-        val review = s.findings.filter { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
+        w.p(
+            "Tallene under viser sammenhengende arbeidstid og tid mellom " +
+                "arbeidsperioder. Når en arbeidsperiode består av flere " +
+                "registrerte tidstyper, vises de hver for seg.",
+        )
+        w.compactNote(
+            "Hvilende nattevakt og arbeidstid",
+            "Hvilende nattevakt regnes som arbeidstid når arbeidstiden " +
+                "kontrolleres, selv om betalingen beregnes annerledes.",
+        )
+
+        val review = s.findings.filter {
+            it.severity == FindingSeverity.REVIEW ||
+                it.severity == FindingSeverity.CRITICAL
+        }
+
         if (review.isEmpty()) {
-            w.statusRow("Arbeidstid", "Ingen forhold markert", PdfTone.OK)
+            w.statusRow(
+                "Arbeidstid",
+                "Ingen forhold markert",
+                PdfTone.OK,
+            )
         } else {
             val groups = review.groupBy { it.title }
+
             groups.forEach { (title, findings) ->
-                w.controlSummaryRow(plainFindingTitle(title), findingMetric(title, findings), findings.size)
+                w.controlSummaryRow(
+                    plainFindingTitle(title),
+                    findingMetric(title, findings),
+                    findings.size,
+                )
             }
+
             if (includeDetails) {
-                w.subheading("Detaljer")
-                groups.forEach { (title, findings) ->
-                    val heading = plainFindingTitle(title)
-                    val details = findings.map(::compactFindingDetail)
-                    w.keepControlGroupTogether(heading, details)
-                    w.smallText(heading)
-                    details.forEach(w::compactControlDetail)
-                    w.space(2)
+                val shortRest =
+                    groups["Kort hvile mellom arbeidsperioder"].orEmpty()
+                val longPeriods =
+                    groups["Lang sammenhengende arbeidsperiode"].orEmpty()
+
+                if (shortRest.isNotEmpty()) {
+                    w.space(5)
+                    w.worktimeSectionTitle(
+                        "Kort tid mellom arbeidsperioder",
+                        PdfTone.WARNING,
+                    )
+                    w.worktimeRestCard(
+                        shortRest.map(::compactFindingDetail),
+                    )
+                }
+
+                if (longPeriods.isNotEmpty()) {
+                    w.space(7)
+                    w.worktimeSectionTitle(
+                        "Lange arbeidsperioder",
+                        PdfTone.INFO,
+                    )
+
+                    val visualPeriods =
+                        longWorktimePeriodsForPdf(s.workBlocks)
+
+                    if (visualPeriods.size == longPeriods.size) {
+                        w.worktimePeriodGrid(visualPeriods)
+                    } else {
+                        // Fail closed for presentation: special travel/roster
+                        // combinations retain the already-qualified textual
+                        // audit rather than being visualized incorrectly.
+                        val details =
+                            longPeriods.map(::compactFindingDetail)
+                        w.keepControlGroupTogether(
+                            "Lange arbeidsperioder",
+                            details,
+                        )
+                        details.forEach(w::compactControlDetail)
+                    }
+                }
+
+                val otherGroups = groups.filterKeys { title ->
+                    title != "Kort hvile mellom arbeidsperioder" &&
+                        title != "Lang sammenhengende arbeidsperiode"
+                }
+
+                if (otherGroups.isNotEmpty()) {
+                    w.space(6)
+                    w.subheading("Andre forhold")
+                    otherGroups.forEach { (title, findings) ->
+                        val heading = plainFindingTitle(title)
+                        val details =
+                            findings.map(::compactFindingDetail)
+
+                        w.keepControlGroupTogether(
+                            heading,
+                            details,
+                        )
+                        w.smallText(heading)
+                        details.forEach(w::compactControlDetail)
+                        w.space(2)
+                    }
                 }
             }
         }
 
-        w.footerMeta("Kontrollgrunnlag: arbeidsmiljøloven kapittel 10 og Dok. 25 punkt 20.2. Den konkrete arbeidstidsordningen kan avhenge av gjennomsnittsberegning og lokale avtaler.")
+        w.footerMeta(
+            "Kontrollgrunnlag: arbeidsmiljøloven kapittel 10 og Dok. 25 " +
+                "punkt 20.2. Den konkrete arbeidstidsordningen kan avhenge " +
+                "av gjennomsnittsberegning og lokale avtaler.",
+        )
         w.space(4)
         val workingInterpretationRules =
             app.ferietur.domain.FerieturRules
@@ -1094,6 +1291,703 @@ private class PdfWriter(private val document: PdfDocument) {
         sourceLines.forEach { line -> drawTextAt(line, left + if (warning) 10f else 0f, yy, 7.8f, false, Color.rgb(99, 103, 111)); yy += 10.2f }
         y += h
         rule(light = true)
+    }
+
+    fun worktimeSectionTitle(
+        title: String,
+        tone: PdfTone,
+    ) {
+        ensure(24f)
+
+        val toneColor = when (tone) {
+            PdfTone.WARNING -> Color.rgb(205, 137, 27)
+            PdfTone.INFO -> Color.rgb(74, 95, 138)
+            PdfTone.OK -> Color.rgb(42, 118, 72)
+            PdfTone.NEUTRAL -> Color.rgb(90, 94, 102)
+        }
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f
+        paint.color = toneColor
+        page!!.canvas.drawCircle(
+            left + 6f,
+            y + 9f,
+            5f,
+            paint,
+        )
+        paint.style = Paint.Style.FILL
+
+        drawTextAt(
+            title,
+            left + 18f,
+            y + 12f,
+            10.4f,
+            true,
+            Color.rgb(35, 42, 55),
+        )
+
+        y += 23f
+    }
+
+    fun worktimeRestCard(
+        details: List<String>,
+    ) {
+        if (details.isEmpty()) return
+
+        val textWidth = right - left - 45f
+        val rowHeights = details.map { detail ->
+            maxOf(
+                16f,
+                wrapped(
+                    detail,
+                    7.8f,
+                    textWidth,
+                    false,
+                ).size * 10.2f + 5f,
+            )
+        }
+
+        val cardHeight =
+            10f + rowHeights.sum()
+
+        ensure(cardHeight + 5f)
+
+        drawRoundedPanel(
+            x = left,
+            top = y,
+            width = right - left,
+            height = cardHeight,
+            radius = 8f,
+            fill = Color.rgb(252, 252, 253),
+            stroke = Color.rgb(224, 228, 234),
+        )
+
+        var yy = y + 7f
+
+        details.forEachIndexed { index, detail ->
+            val rowHeight = rowHeights[index]
+            val lines = wrapped(
+                detail,
+                7.8f,
+                textWidth,
+                false,
+            )
+
+            paint.style = Paint.Style.FILL
+            paint.color = Color.rgb(218, 148, 30)
+            page!!.canvas.drawCircle(
+                left + 13f,
+                yy + 7f,
+                5f,
+                paint,
+            )
+
+            drawCenteredText(
+                "!",
+                left + 13f,
+                yy + 9.5f,
+                7f,
+                true,
+                Color.WHITE,
+            )
+
+            lines.forEachIndexed { lineIndex, line ->
+                drawTextAt(
+                    line,
+                    left + 28f,
+                    yy + 8.5f + lineIndex * 10.2f,
+                    7.8f,
+                    false,
+                    Color.rgb(55, 60, 69),
+                )
+            }
+
+            yy += rowHeight
+
+            if (index != details.lastIndex) {
+                paint.color = Color.rgb(232, 234, 238)
+                paint.strokeWidth = 0.7f
+                page!!.canvas.drawLine(
+                    left + 10f,
+                    yy,
+                    right - 10f,
+                    yy,
+                    paint,
+                )
+            }
+        }
+
+        y += cardHeight + 4f
+    }
+
+    fun worktimePeriodGrid(
+        periods: List<PdfExporter.PdfWorktimePeriod>,
+    ) {
+        if (periods.isEmpty()) return
+
+        val compactPeriods =
+            periods.filter(
+                PdfExporter::isCompactWorktimePeriodForPdf,
+            )
+
+        val visualPeriods =
+            periods.filterNot(
+                PdfExporter::isCompactWorktimePeriodForPdf,
+            )
+
+        if (compactPeriods.isNotEmpty()) {
+            worktimeCompactPeriods(compactPeriods)
+
+            if (visualPeriods.isNotEmpty()) {
+                space(5)
+            }
+        }
+
+        if (visualPeriods.isEmpty()) return
+
+        val gap = 10f
+        val cardWidth =
+            (right - left - gap) / 2f
+
+        visualPeriods.chunked(2).forEach { row ->
+            val heights = row.map { period ->
+                worktimePeriodCardHeight(
+                    period,
+                    cardWidth,
+                )
+            }
+
+            val rowHeight =
+                heights.maxOrNull() ?: 0f
+
+            ensure(rowHeight + 8f)
+
+            row.forEachIndexed { index, period ->
+                val x =
+                    left + index * (cardWidth + gap)
+
+                drawWorktimePeriodCard(
+                    period = period,
+                    x = x,
+                    top = y,
+                    width = cardWidth,
+                    height = rowHeight,
+                )
+            }
+
+            y += rowHeight + 8f
+        }
+    }
+
+    private fun worktimeCompactPeriods(
+        periods: List<PdfExporter.PdfWorktimePeriod>,
+    ) {
+        if (periods.isEmpty()) return
+
+        val rowHeight = 20f
+        val panelHeight =
+            8f + periods.size * rowHeight
+
+        ensure(panelHeight + 4f)
+
+        drawRoundedPanel(
+            x = left,
+            top = y,
+            width = right - left,
+            height = panelHeight,
+            radius = 7f,
+            fill = Color.rgb(250, 251, 252),
+            stroke = Color.rgb(222, 226, 232),
+        )
+
+        var yy = y + 8f
+
+        periods.forEachIndexed { index, period ->
+            val segment = period.segments.single()
+            val centerY = yy + 7f
+
+            paint.style = Paint.Style.FILL
+            paint.color =
+                worktimeSegmentColor(segment.kind)
+
+            page!!.canvas.drawRoundRect(
+                RectF(
+                    left + 10f,
+                    centerY - 4f,
+                    left + 18f,
+                    centerY + 4f,
+                ),
+                2f,
+                2f,
+                paint,
+            )
+
+            drawTextAt(
+                worktimeDurationLabel(period.minutes),
+                left + 26f,
+                centerY + 2.5f,
+                8.1f,
+                true,
+                Color.rgb(42, 47, 57),
+            )
+
+            drawTextAt(
+                worktimePeriodRange(period),
+                left + 72f,
+                centerY + 2.5f,
+                7.5f,
+                false,
+                Color.rgb(67, 72, 81),
+            )
+
+            drawRightText(
+                worktimeSegmentLabel(segment.kind),
+                right - 10f,
+                centerY + 2.5f,
+                7.7f,
+                true,
+                Color.rgb(55, 60, 69),
+            )
+
+            yy += rowHeight
+
+            if (index != periods.lastIndex) {
+                paint.color = Color.rgb(232, 234, 238)
+                paint.strokeWidth = 0.7f
+
+                page!!.canvas.drawLine(
+                    left + 10f,
+                    yy,
+                    right - 10f,
+                    yy,
+                    paint,
+                )
+            }
+        }
+
+        y += panelHeight + 3f
+    }
+
+    private fun worktimePeriodCardHeight(
+        period: PdfExporter.PdfWorktimePeriod,
+        width: Float,
+    ): Float {
+        val subtitleLines = wrapped(
+            worktimePeriodRange(period),
+            6.9f,
+            width - 18f,
+            false,
+        ).size
+
+        val note = worktimePeriodNote(period)
+        val noteLines = if (note == null) {
+            0
+        } else {
+            wrapped(
+                note,
+                7f,
+                width - 30f,
+                false,
+            ).size
+        }
+
+        return 57f +
+            subtitleLines * 8.9f +
+            period.segments.size * 14.2f +
+            noteLines * 9f
+    }
+
+    private fun drawWorktimePeriodCard(
+        period: PdfExporter.PdfWorktimePeriod,
+        x: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+    ) {
+        drawRoundedPanel(
+            x = x,
+            top = top,
+            width = width,
+            height = height,
+            radius = 8f,
+            fill = Color.rgb(249, 250, 252),
+            stroke = Color.rgb(210, 218, 231),
+        )
+
+        val duration =
+            worktimeDurationLabel(period.minutes)
+
+        drawTextAt(
+            "$duration sammenhengende arbeidstid",
+            x + 9f,
+            top + 14f,
+            9.1f,
+            true,
+            Color.rgb(35, 42, 55),
+        )
+
+        val subtitle = worktimePeriodRange(period)
+        val subtitleLines = wrapped(
+            subtitle,
+            6.9f,
+            width - 18f,
+            false,
+        )
+
+        subtitleLines.forEachIndexed { index, line ->
+            drawTextAt(
+                line,
+                x + 9f,
+                top + 25f + index * 8.9f,
+                6.9f,
+                false,
+                Color.rgb(78, 83, 93),
+            )
+        }
+
+        var yy =
+            top + 31f +
+                subtitleLines.size * 8.9f
+
+        val barLeft = x + 9f
+        val barRight = x + width - 9f
+        val barWidth = barRight - barLeft
+
+        drawTextAt(
+            worktimeClock(period.start),
+            barLeft,
+            yy,
+            6.7f,
+            false,
+            Color.rgb(70, 76, 87),
+        )
+
+        var elapsed = 0L
+
+        period.segments.dropLast(1).forEach { segment ->
+            elapsed += segment.minutes
+
+            val centerX =
+                barLeft +
+                    barWidth *
+                    (
+                        elapsed.toFloat() /
+                            period.minutes.toFloat()
+                        )
+
+            drawCenteredText(
+                worktimeClock(segment.end),
+                centerX,
+                yy,
+                6.7f,
+                false,
+                Color.rgb(70, 76, 87),
+            )
+        }
+
+        drawRightText(
+            worktimeClock(period.end),
+            barRight,
+            yy,
+            6.7f,
+            false,
+            Color.rgb(70, 76, 87),
+        )
+
+        val barTop = yy + 5f
+        val barHeight = 11f
+        var segmentX = barLeft
+
+        period.segments.forEach { segment ->
+            val segmentWidth =
+                barWidth *
+                    (
+                        segment.minutes.toFloat() /
+                            period.minutes.toFloat()
+                        )
+
+            paint.style = Paint.Style.FILL
+            paint.color =
+                worktimeSegmentColor(segment.kind)
+
+            page!!.canvas.drawRoundRect(
+                RectF(
+                    segmentX,
+                    barTop,
+                    segmentX + segmentWidth,
+                    barTop + barHeight,
+                ),
+                3.5f,
+                3.5f,
+                paint,
+            )
+
+            segmentX += segmentWidth
+        }
+
+        yy = barTop + barHeight + 10f
+
+        period.segments.forEach { segment ->
+            val color =
+                worktimeSegmentColor(segment.kind)
+
+            paint.style = Paint.Style.FILL
+            paint.color = color
+
+            page!!.canvas.drawRoundRect(
+                RectF(
+                    x + 9f,
+                    yy - 7f,
+                    x + 17f,
+                    yy + 1f,
+                ),
+                2f,
+                2f,
+                paint,
+            )
+
+            val label =
+                "${worktimeClock(segment.start)}-" +
+                    "${worktimeClock(segment.end)} · " +
+                    worktimeSegmentLabel(segment.kind)
+
+            drawTextAt(
+                label,
+                x + 23f,
+                yy,
+                7f,
+                false,
+                Color.rgb(55, 60, 69),
+            )
+
+            drawRightText(
+                worktimeDurationLabel(segment.minutes),
+                x + width - 9f,
+                yy,
+                7.1f,
+                true,
+                Color.rgb(45, 50, 59),
+            )
+
+            yy += 14.2f
+        }
+
+        worktimePeriodNote(period)?.let { note ->
+            val lines = wrapped(
+                note,
+                7f,
+                width - 30f,
+                false,
+            )
+
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f
+            paint.color = Color.rgb(76, 101, 151)
+
+            page!!.canvas.drawCircle(
+                x + 13f,
+                yy - 2.5f,
+                4.5f,
+                paint,
+            )
+
+            paint.style = Paint.Style.FILL
+
+            drawCenteredText(
+                "i",
+                x + 13f,
+                yy,
+                6.5f,
+                true,
+                Color.rgb(76, 101, 151),
+            )
+
+            lines.forEachIndexed { index, line ->
+                drawTextAt(
+                    line,
+                    x + 23f,
+                    yy + index * 9f,
+                    7f,
+                    false,
+                    Color.rgb(76, 101, 151),
+                )
+            }
+        }
+    }
+
+    private fun worktimePeriodRange(
+        period: PdfExporter.PdfWorktimePeriod,
+    ): String =
+        "${worktimeCompactDateTime(period.start)}  →  " +
+            worktimeCompactDateTime(period.end)
+
+    private fun worktimeCompactDateTime(
+        value: java.time.LocalDateTime,
+    ): String {
+        val day =
+            value.dayOfWeek.getDisplayName(
+                java.time.format.TextStyle.SHORT,
+                NORWEGIAN_LOCALE,
+            ).let { label ->
+                if (label.endsWith(".")) label else "$label."
+            }
+
+        val month =
+            value.month.getDisplayName(
+                java.time.format.TextStyle.SHORT,
+                NORWEGIAN_LOCALE,
+            ).let { label ->
+                if (label.endsWith(".")) label else "$label."
+            }
+
+        return "$day ${value.dayOfMonth}. $month " +
+            worktimeClock(value)
+    }
+
+    private fun worktimeClock(
+        value: java.time.LocalDateTime,
+    ): String =
+        "%02d:%02d".format(
+            NORWEGIAN_LOCALE,
+            value.hour,
+            value.minute,
+        )
+
+    private fun worktimeDurationLabel(
+        minutes: Long,
+    ): String {
+        val hours = minutes / 60L
+        val remainder = minutes % 60L
+
+        return when {
+            remainder == 0L -> "$hours t"
+            hours == 0L -> "$remainder min"
+            else -> "$hours t $remainder min"
+        }
+    }
+
+    private fun worktimeSegmentLabel(
+        kind: TimeKind,
+    ): String = when (kind) {
+        TimeKind.RESTING_NIGHT_WATCH ->
+            "Hvilende nattevakt"
+
+        TimeKind.ACTIVE_WORK ->
+            "Aktivt arbeid"
+
+        TimeKind.ACTIVE_NIGHT_WATCH ->
+            "Aktiv nattevakt"
+
+        TimeKind.TRAVEL_WITH_RESPONSIBILITY ->
+            "Reise med ansvar"
+
+        else ->
+            "Arbeidstid"
+    }
+
+    private fun worktimeSegmentColor(
+        kind: TimeKind,
+    ): Int = when (kind) {
+        TimeKind.RESTING_NIGHT_WATCH ->
+            Color.rgb(65, 82, 126)
+
+        TimeKind.ACTIVE_WORK,
+        TimeKind.ACTIVE_NIGHT_WATCH,
+        ->
+            Color.rgb(78, 132, 106)
+
+        TimeKind.TRAVEL_WITH_RESPONSIBILITY ->
+            Color.rgb(218, 145, 42)
+
+        else ->
+            Color.rgb(110, 116, 126)
+    }
+
+    private fun worktimePeriodNote(
+        period: PdfExporter.PdfWorktimePeriod,
+    ): String? = when {
+        period.segments.any {
+            it.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY
+        } ->
+            "Perioden består av flere registrerte tidstyper."
+
+        period.segments.any {
+            it.kind == TimeKind.RESTING_NIGHT_WATCH
+        } ->
+            "Dette betyr ikke " +
+                "${worktimeDurationLabel(period.minutes)} aktivt arbeid."
+
+        period.segments.size > 1 ->
+            "Perioden består av flere registrerte tidstyper."
+
+        else ->
+            null
+    }
+
+    private fun drawRoundedPanel(
+        x: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+        radius: Float,
+        fill: Int,
+        stroke: Int,
+    ) {
+        val rect = RectF(
+            x,
+            top,
+            x + width,
+            top + height,
+        )
+
+        paint.style = Paint.Style.FILL
+        paint.color = fill
+        page!!.canvas.drawRoundRect(
+            rect,
+            radius,
+            radius,
+            paint,
+        )
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.8f
+        paint.color = stroke
+        page!!.canvas.drawRoundRect(
+            rect,
+            radius,
+            radius,
+            paint,
+        )
+
+        paint.style = Paint.Style.FILL
+    }
+
+    private fun drawCenteredText(
+        text: String,
+        centerX: Float,
+        baseline: Float,
+        size: Float,
+        bold: Boolean,
+        color: Int,
+    ) {
+        paint.textSize = size
+        paint.typeface =
+            if (bold) {
+                Typeface.create(
+                    Typeface.DEFAULT,
+                    Typeface.BOLD,
+                )
+            } else {
+                Typeface.DEFAULT
+            }
+        paint.color = color
+
+        page!!.canvas.drawText(
+            text,
+            centerX - paint.measureText(text) / 2f,
+            baseline,
+            paint,
+        )
     }
 
     fun controlSummaryRow(title: String, metric: String, count: Int) {
