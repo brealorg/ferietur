@@ -1103,3 +1103,52 @@ then
 fi
 
 echo "CURRENT_PILOT01_003_WORKTIME_VISUAL_PDF_CONTRACT=PASS"
+
+
+# PILOT01-004
+#
+# The 48-hour work-time control is scoped to a continuous seven-day
+# window. It remains a review indicator and explicitly preserves the
+# possibility of eight-week averaging and work outside the trip.
+if ! rg -q \
+  'fun maxRegisteredWorktimeInSevenDays' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_PILOT01_004_SEVEN_DAY_WORKTIME_CONTRACT=FAIL_WINDOW_HELPER"
+  exit 1
+fi
+
+if rg -q \
+  '"Mer enn 48 timer i den viste perioden"' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_PILOT01_004_SEVEN_DAY_WORKTIME_CONTRACT=FAIL_LEGACY_DOMAIN_WINDOW"
+  exit 1
+fi
+
+if ! rg -q \
+  '"Mer enn 48 timer i en sju-dagersperiode"' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt ||
+   ! rg -q \
+  'gjennomsnittsberegnes over åtte uker' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt ||
+   ! rg -q \
+  'arbeid før og etter turen' \
+  app/src/main/java/app/ferietur/domain/TripPlanEngine.kt
+then
+  echo "CURRENT_PILOT01_004_SEVEN_DAY_WORKTIME_CONTRACT=FAIL_SEMANTICS"
+  exit 1
+fi
+
+if ! rg -q \
+  'solgardenUsesMaximumSevenDayWindowInsteadOfWholeTripTotal' \
+  app/src/test/java/app/ferietur/domain/Pilot01WorktimeWindowTest.kt ||
+   ! rg -q \
+  '138 t' \
+  app/src/test/java/app/ferietur/domain/Pilot01WorktimeWindowTest.kt
+then
+  echo "CURRENT_PILOT01_004_SEVEN_DAY_WORKTIME_CONTRACT=FAIL_SOLGARDEN_REGRESSION"
+  exit 1
+fi
+
+echo "CURRENT_PILOT01_004_SEVEN_DAY_WORKTIME_CONTRACT=PASS"

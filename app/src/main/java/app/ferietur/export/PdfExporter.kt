@@ -919,6 +919,7 @@ object PdfExporter {
 
     private fun plainFindingTitle(title: String): String = when (title) {
         "Mer enn 48 timer i den viste perioden" -> "Mye arbeid i perioden"
+        "Mer enn 48 timer i en sju-dagersperiode" -> "Høy arbeidstid på sju dager"
         "Kort hvile mellom arbeidsperioder" -> "Kort tid mellom arbeidsperioder"
         "Lang sammenhengende arbeidsperiode" -> "Lange arbeidsperioder"
         else -> title
@@ -926,6 +927,8 @@ object PdfExporter {
 
     private fun plainFindingSummary(title: String, findings: List<ControlFinding>): String = when (title) {
         "Mer enn 48 timer i den viste perioden" -> "Den registrerte arbeidstiden er høy. Kontroller hvilken arbeidstidsordning som gjelder for turen."
+        "Mer enn 48 timer i en sju-dagersperiode" ->
+            "Du har registrert mer enn 48 timer arbeid i løpet av sju dager. Dette bør sjekkes nærmere."
         "Kort hvile mellom arbeidsperioder" -> "${findings.size} perioder har kort sammenhengende fri mellom arbeidsperiodene."
         "Lang sammenhengende arbeidsperiode" -> "${findings.size} arbeidsperioder er så lange at de bør vurderes særskilt."
         else -> findings.firstOrNull()?.detail ?: "Bør vurderes."
@@ -945,15 +948,25 @@ object PdfExporter {
             }
         }
         val minutes = when (title) {
-            "Mer enn 48 timer i den viste perioden" -> firstDuration(Regex("Du har registrert (\\d+) t(?: (\\d+) min)?"))
-            "Kort hvile mellom arbeidsperioder" -> firstDuration(Regex("Du har bare (\\d+) t(?: (\\d+) min)? sammenhengende fri"))
-            "Lang sammenhengende arbeidsperiode" -> firstDuration(Regex("Arbeidsperioden varer (\\d+) t(?: (\\d+) min)?"))
+            "Mer enn 48 timer i den viste perioden" ->
+                firstDuration(Regex("Du har registrert (\\d+) t(?: (\\d+) min)?"))
+            "Mer enn 48 timer i en sju-dagersperiode" ->
+                firstDuration(Regex("Du har registrert (\\d+) t(?: (\\d+) min)? arbeidstid"))
+            "Kort hvile mellom arbeidsperioder" ->
+                firstDuration(Regex("Du har bare (\\d+) t(?: (\\d+) min)? sammenhengende fri"))
+            "Lang sammenhengende arbeidsperiode" ->
+                firstDuration(Regex("Arbeidsperioden varer (\\d+) t(?: (\\d+) min)?"))
             else -> null
         }
         return when (title) {
-            "Mer enn 48 timer i den viste perioden" -> minutes?.let(::minutes)?.let { "$it registrert" } ?: "Bør vurderes"
-            "Kort hvile mellom arbeidsperioder" -> minutes?.let(::minutes)?.let { "kortest $it" } ?: "Bør vurderes"
-            "Lang sammenhengende arbeidsperiode" -> minutes?.let(::minutes)?.let { "lengst $it" } ?: "Bør vurderes"
+            "Mer enn 48 timer i den viste perioden" ->
+                minutes?.let(::minutes)?.let { "$it registrert" } ?: "Bør vurderes"
+            "Mer enn 48 timer i en sju-dagersperiode" ->
+                minutes?.let(::minutes)?.let { "$it på 7 dager" } ?: "Bør vurderes"
+            "Kort hvile mellom arbeidsperioder" ->
+                minutes?.let(::minutes)?.let { "kortest $it" } ?: "Bør vurderes"
+            "Lang sammenhengende arbeidsperiode" ->
+                minutes?.let(::minutes)?.let { "lengst $it" } ?: "Bør vurderes"
             else -> "Bør vurderes"
         }
     }

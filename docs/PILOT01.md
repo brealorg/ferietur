@@ -123,3 +123,27 @@ forkortelser, punktum og pil, for eksempel:
 Dette er kun tekst- og presentasjonspolering. Beregning,
 arbeidstidskontroll, tariff, antall funn og snapshotformat er uendret.
 
+## PILOT01-004 — korrekt sju-dagersvindu for arbeidstid
+
+Solgården-piloten avdekket at arbeidstidskontrollen sammenlignet samlet
+arbeidstid i hele den viste turperioden direkte med 48 timer. Det gir feil
+tidssemantikk når turen varer mer enn sju dager.
+
+Arbeidstidskontrollen bruker nå maksimalt registrert arbeidstid innenfor et
+sammenhengende 168-timersvindu.
+
+Kontrollen er fortsatt et varsel og avgjør ikke om en konkret
+arbeidstidsordning er lovlig. Teksten gjør eksplisitt oppmerksom på at
+48-timersgrensen kan være underlagt gjennomsnittsberegning over åtte uker,
+og at arbeidstid utenfor den registrerte turen må tas med i den samlede
+vurderingen.
+
+I Solgården-eksempelet er:
+
+- samlet registrert arbeidstid i hele turen: 146 timer;
+- høyeste registrerte arbeidstid i et sju-dagersvindu: 138 timer;
+- antall REVIEW/CRITICAL-funn fortsatt 14.
+
+PILOT01-004 endrer ikke lønnsberegning, tariff, betalingsgrunnlag,
+snapshotformat eller reglene for kort hvile og lange arbeidsperioder.
+

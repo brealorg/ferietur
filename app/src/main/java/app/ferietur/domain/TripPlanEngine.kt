@@ -1060,6 +1060,99 @@ object TripPlanEngine {
     fun chapter20Applies(tripStart: LocalDateTime, tripEnd: LocalDateTime): Boolean =
         tripEnd.isAfter(tripStart) && !isDayTrip(tripStart, tripEnd)
 
+    private data class SevenDayWorktimeWindow(
+        val start: LocalDateTime,
+        val end: LocalDateTime,
+        val minutes: Long,
+    )
+
+    /**
+     * Returns the largest amount of already-registered work contained in any
+     * continuous 168-hour window.
+     *
+     * This is deliberately a control indicator, not a legality decision.
+     * controlFindings() only knows the work represented in the trip data; work
+     * before or after the trip must still be included by the employer when the
+     * actual working-time arrangement is assessed.
+     */
+    private fun maxRegisteredWorktimeInSevenDays(
+        work: List<Pair<LocalDateTime, LocalDateTime>>,
+    ): SevenDayWorktimeWindow? {
+        if (work.isEmpty()) return null
+
+        val firstWorkStart =
+            work.minOf { it.first }
+        val lastWorkEnd =
+            work.maxOf { it.second }
+
+        /*
+         * The overlap sum can only change slope when the left edge crosses a
+         * work-period start or when the right edge crosses a work-period end.
+         * Testing starts and (end - 7 days) therefore covers every possible
+         * maximum without minute-by-minute iteration.
+         */
+        val candidateStarts =
+            work.flatMap { period ->
+                listOf(
+                    period.first,
+                    period.second.minusDays(7),
+                )
+            }
+                .distinct()
+                .sorted()
+
+        val windows =
+            candidateStarts.map { start ->
+                val end = start.plusDays(7)
+
+                val minutes =
+                    work.sumOf { period ->
+                        val overlapStart =
+                            maxOf(period.first, start)
+                        val overlapEnd =
+                            minOf(period.second, end)
+
+                        if (overlapEnd.isAfter(overlapStart)) {
+                            ChronoUnit.MINUTES.between(
+                                overlapStart,
+                                overlapEnd,
+                            )
+                        } else {
+                            0L
+                        }
+                    }
+
+                SevenDayWorktimeWindow(
+                    start = start,
+                    end = end,
+                    minutes = minutes,
+                )
+            }
+
+        val maximum =
+            windows.maxOf { it.minutes }
+
+        val tied =
+            windows.filter {
+                it.minutes == maximum
+            }
+
+        /*
+         * Prefer a maximum window fully bounded by the known work span. If the
+         * trip is shorter than seven days, prefer one beginning at/after the
+         * first registered work instead of presenting a synthetic start before
+         * the trip.
+         */
+        return tied.firstOrNull { window ->
+            !window.start.isBefore(firstWorkStart) &&
+                !window.end.isAfter(lastWorkEnd)
+        }
+            ?: tied.firstOrNull { window ->
+                !window.start.isBefore(firstWorkStart)
+            }
+            ?: tied.last()
+    }
+
     fun controlFindings(
         blocks: List<WorkBlock>,
         unresolvedRuleCount: Int,
@@ -1089,14 +1182,28 @@ object TripPlanEngine {
             .flatMap { block -> travelNightBlocks(block, rateSet) }
         val work = mergePeriods(directWorkBlocks + travelInOrdinaryWorkTime + passiveNightTravel)
         val totalMinutes = work.sumOf { ChronoUnit.MINUTES.between(it.first, it.second) }
-        if (totalMinutes > 48 * 60) {
+        val sevenDayWindow = maxRegisteredWorktimeInSevenDays(work)
+
+        if (
+            sevenDayWindow != null &&
+            sevenDayWindow.minutes > 48 * 60
+        ) {
             findings += ControlFinding(
                 FindingSeverity.REVIEW,
-                "Mer enn 48 timer i den viste perioden",
-                "Du har registrert ${hoursLabel(totalMinutes)} som arbeid i perioden. Kontroller hvilken arbeidstidsordning som gjelder for turen.",
+                "Mer enn 48 timer i en sju-dagersperiode",
+                "Du har registrert ${hoursLabel(sevenDayWindow.minutes)} arbeid i løpet av sju dager, " +
+                    "fra ${controlDateTime(sevenDayWindow.start)} til ${controlDateTime(sevenDayWindow.end)}. " +
+                    "Arbeidsmiljøloven § 10-6 åttende ledd setter grenser for samlet arbeidstid. " +
+                    "I noen arbeidstidsordninger kan 48-timersgrensen gjennomsnittsberegnes over åtte uker. " +
+                    "Derfor betyr ikke dette varselet automatisk at arbeidsplanen er ulovlig. " +
+                    "Husk at arbeid før og etter turen også må tas med når arbeidstiden vurderes.",
             )
         } else {
-            findings += ControlFinding(FindingSeverity.OK, "Samlet arbeidstid", "${hoursLabel(totalMinutes)} i den viste perioden.")
+            findings += ControlFinding(
+                FindingSeverity.OK,
+                "Samlet arbeidstid",
+                "${hoursLabel(totalMinutes)} i den viste perioden.",
+            )
         }
         work.zipWithNext().forEach { (previous, next) ->
             val rest = ChronoUnit.MINUTES.between(previous.second, next.first)
