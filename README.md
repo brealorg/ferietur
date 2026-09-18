@@ -1,63 +1,164 @@
+<div align="center">
+
+<img src="assets/ferietur-icon.png" width="168" alt="Ferietur app-ikon">
+
 # Ferietur
 
-Ferietur is a Norwegian Android application for planning staffed holiday trips and producing an explainable wage/payment basis. This tree is the **PLAY01 canonical successor** to the qualified direct-APK release `0.5.4`, preparing the same package identity for Google Play.
+**Planlegging, beregning og dokumentasjon for ferieturer der ansatte følger med.**
 
-## Play candidate identity
+[![Release](https://img.shields.io/badge/release-0.5.6-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.5.6)
+![Android](https://img.shields.io/badge/Android-8.0%2B-F9C66B?style=flat-square&logo=android&logoColor=2A2859)
+![Package](https://img.shields.io/badge/package-app.ferietur-2A2859?style=flat-square)
+![Data](https://img.shields.io/badge/data-local_only-F9C66B?style=flat-square)
 
-- application ID: `app.ferietur`
-- versionName: `0.5.5`
-- versionCode: `52`
-- min SDK: 26
-- target/compile SDK: 37
-- UI: Jetpack Compose / Material 3
-- candidate distribution: Google Play App Bundle
-- Play App Signing: must import a copy of the established direct-APK app-signing key
-- permanent app-signing certificate SHA-256: `9bc0c2925d6bad3947cbcf6c237d6d085aebf5cb54f67170622ce02f8e8252e7`
-- upload signing: separate Play upload key outside source/evidence
+## [⬇ Last ned Ferietur 0.5.6](https://github.com/brealorg/ferietur/releases/download/v0.5.6/Ferietur-0.5.6.apk)
 
-## Release state carried forward
+**Android APK · Android 8.0 eller nyere**
 
-The release-blocking CODEAUDIT02 work remains closed through the Android runtime, persistence and release-trust layers:
+[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
-- CA-001: complete selected trip interval representation and boundary tests;
-- CA-002/005/008/009: schema v6 durable finalized snapshots, migration provenance, UUID identity and frozen build/rate metadata;
-- CA-003/007: atomic/recoverable draft persistence and main-safe repository/PDF I/O;
-- CA-004/006: neutral/time-derived defaults and effective-dated salary applicability;
-- CA-010: six Android runtime contracts for cold launch, disclaimer persistence, system Back, rotation, draft recovery and FileProvider sharing;
-- CA-012 Stage B: canonical README/source manifest/release evidence;
-- CA-013/ICON01: adaptive, round and monochrome suitcase/route/pin identity;
-- CA-014: **fixed in PLAY01** by disabling language-resource splitting for the AAB because Ferietur forces nb-NO independently of system locale;
-- CA-015: direct `core-ktx` alignment to 1.18.0;
-- CA-016: Material3 `1.5.0-alpha26` remains an accepted dependency decision.
+</div>
 
-The direct APK `0.5.4 / 51` remains the public baseline. PLAY01 changes product code only to add explicit Play privacy disclosure/linking, plus the AAB language-split build configuration and version promotion to `0.5.5 / 52`. It does not change tariff amounts, calculation formulas, persistence schema, Android permissions or package identity.
+> [!IMPORTANT]
+> **Ferietur er et uavhengig planleggings- og beregningsverktøy.** Appen er ikke utviklet av, godkjent av eller en offisiell tjeneste fra Oslo kommune eller andre offentlige myndigheter. Beregningene erstatter heller ikke gjeldende tariffavtale, arbeidsgivers vurdering eller ordinær lønnskontroll.
 
-## Privacy and Google Play
+## Hvorfor Ferietur?
 
-The app still has no `INTERNET` permission. Data entered in Ferietur remains local unless the user explicitly exports/shares a PDF or chooses to contact the developer through an external email app.
+Når en person er avhengig av at ansatte blir med for å kunne reise på ferie, blir en vanlig ferietur fort også et spørsmål om **turnus, reisetid, arbeidstid, natt, tillegg, ansvar og betaling**.
 
-Canonical privacy-policy target:
+Ferietur samler disse opplysningene i én strukturert turplan og bygger et beregningsgrunnlag som kan **forklares, kontrolleres og dokumenteres**.
+
+Målet er ikke bare å produsere et sluttbeløp, men å gjøre det synlig **hva som er beregnet, hvorfor og på hvilket grunnlag**.
+
+## Hva appen gjør
+
+- planlegger turen dag for dag
+- registrerer reise, arbeid og relevante tidsperioder
+- håndterer arbeid på dag, kveld og natt, inkludert hvilende nattevakt og aktivt arbeid
+- bygger opp et forklarbart lønns- og betalingsgrunnlag
+- støtter ulike oppsett for turnus og separat oppdrag
+- lagrer turer og utkast lokalt på enheten
+- lager PDF med beregning, forutsetninger og regelinformasjon
+- lar brukeren gå tilbake og kontrollere grunnlaget før noe ferdigstilles
+
+<!-- FERIETUR_SCREENSHOTS_START -->
+## Skjermbilder
+
+Ekte skjermbilder fra Ferietur på Android.
+
+<p align="center">
+  <img src="assets/screenshots/01-mine-turer.png" width="30%" alt="Mine turer med pågående tur og tur klar for eksport">
+  <img src="assets/screenshots/02-turen.png" width="30%" alt="Turoppsett med datoer og reisetider">
+  <img src="assets/screenshots/03-arbeidsplan.png" width="30%" alt="Arbeidsplan med arbeid, natt og reise">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/04-beregning.png" width="30%" alt="Beregning med forklarbare beløpsposter">
+  <img src="assets/screenshots/05-sporbart-grunnlag.png" width="30%" alt="Detaljert beregningsgrunnlag med timer, kilder og regler">
+  <img src="assets/screenshots/06-kontroll.png" width="30%" alt="Kontroll av forhold som bør vurderes">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/07-oppsummering.png" width="30%" alt="Oppsummering og dokumentasjon">
+</p>
+<!-- FERIETUR_SCREENSHOTS_END -->
+
+## Typisk arbeidsflyt
+
+1. **Opprett turen** – datoer, reiseforløp og grunnoppsett.
+2. **Registrer arbeid og ansvar** – hva som faktisk skjer gjennom turen.
+3. **Kontroller lønnsgrunnlaget** – blant annet mot nyere lønnsslipp.
+4. **Se beregningen** – med synlige forutsetninger og regelgrunnlag.
+5. **Lag PDF-dokumentasjon** – som grunnlag for videre kontroll og avklaring.
+
+## Viktig om beregningene
+
+Ferietur er laget for å gjøre kompliserte beregninger mer etterprøvbare, men appen kan ikke vite om lokale avtaler, nye tariffendringer eller arbeidsgivers konkrete vurdering endrer resultatet.
+
+Kontroller derfor alltid:
+
+- lønnsopplysninger mot en nyere lønnsslipp
+- at satsene og reglene fortsatt gjelder for den aktuelle perioden
+- at arbeidstid, reise og ansvar er registrert slik de faktisk er avtalt og gjennomført
+- at beregningsgrunnlaget samsvarer med gjeldende tariff- og arbeidsrettslige regler
+
+## Personvern
+
+Ferietur er laget for lokal bruk:
+
+- turer og utkast lagres lokalt på enheten
+- appen har ingen nettverkstillatelse
+- Android-backup og enhetsoverføring er deaktivert
+- eksporterte PDF-er deles bare når brukeren selv velger å dele dem
+- det kreves ingen konto eller innlogging
+
+[**Les personvernerklæringen**](https://brealorg.github.io/ferietur/privacy/)
+
+## Last ned Ferietur
+
+### Android APK — 0.5.6
+
+[**⬇ Last ned Ferietur-0.5.6.apk**](https://github.com/brealorg/ferietur/releases/download/v0.5.6/Ferietur-0.5.6.apk)
+
+**Android 8.0 eller nyere (API 26+)** · `versionCode 53` · permanent signert produksjonsutgave
+
+Har du allerede Ferietur installert, kan `0.5.6` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
+
+[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
+
+> Google Play-versjonen er i closed testing. Den direkte signerte APK-en publiseres parallelt for manuell installasjon og oppdatering.
+
+<details>
+<summary><strong>Verifiser APK og signeringsidentitet</strong></summary>
+
+### APK SHA-256
 
 ```text
-https://brealorg.github.io/ferietur/privacy/
+aa00be289a95f01f5abcdde1d3a4be97bc004ea9b7c545c06d243534211348ef
 ```
 
-The source tree contains the static publication artifact at `play/privacy-policy.html` plus a Play Console Data safety draft and store-listing copy. The web policy must be live before Closed/Production submission.
-
-## Signing continuity
-
-The permanent Android app-signing certificate is unchanged:
+### Permanent signeringssertifikat SHA-256
 
 ```text
 9bc0c2925d6bad3947cbcf6c237d6d085aebf5cb54f67170622ce02f8e8252e7
 ```
 
-Because existing direct-APK installs already use this identity, Google Play must be configured with **Provide a copy of your app signing key** before public distribution. PLAY01A1 creates a separate Play upload key used only to sign the `.aab` uploaded to Play.
+Checksum og sertifikatfingeravtrykk ligger også som egne filer i releasen.
 
-Private signing material is never stored in this tree, source snapshot or evidence bundle. See `play/play-app-signing.md` and `docs/SIGN01_SIGNING_IDENTITY.md`.
+</details>
 
-## Build and trust gates
+## Release 0.5.6
 
-Canonical source is protected by `SOURCE-SHA256SUMS.txt`. Active gates are successor-semantic plus the PLAY01 canonical source manifest. Historical FINAL01/SIGN01/RC1 phase contracts are retained as audit history but are no longer active version gates.
+`0.5.6` er en kvalitetssikrings- og dokumentasjonsoppdatering med særlig fokus på arbeidstid og etterprøvbarhet.
 
-`apply-build-install.sh` intentionally performs no device installation. It runs source gates plus the strict offline JVM/lint/debug/release/androidTest/AAB build set. PLAY01A1 then signs the AAB externally with the separate upload key.
+Blant endringene:
+
+- arbeidstidskontrollen finner nå høyeste registrerte arbeidstid i løpet av en hvilken som helst sju-dagersperiode, i stedet for å bruke hele turens total
+- tydeligere og mer kompakt arbeidstidsoversikt i PDF
+- bedre klarspråk i kontrollfunn og forklaringer
+- sterkere kildesporing og presentasjon av tariff- og beregningsgrunnlaget
+- flere regresjonstester og kvalitetssikringer
+
+Den direkte APK-en beholder den permanente signeringsidentiteten fra tidligere utgaver. Google Play-versjonen distribueres separat gjennom closed testing.
+
+Se [release notes for 0.5.6](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) for den publiserte releasepakken.
+
+## Status
+
+| Spor | Status |
+|---|---|
+| Signert Android APK | ✅ Publisert |
+| Permanent update-signatur | ✅ Etablert |
+| Lokal lagring / PDF | ✅ Produksjon |
+| Google Play | 🧪 Closed testing |
+| Kildekodepublisering | ✅ Publisert |
+
+## Kildekode og lisens
+
+Kildekoden er publisert i dette repositoryet. Prosjektet har foreløpig ingen åpen kildekode-lisens, og det gis derfor ikke noen generell lisens til å kopiere, endre eller redistribuere prosjektets egen kildekode.
+
+## Tilbakemeldinger
+
+Har du funnet en feil eller noe som er uklart, bruk [GitHub Issues](https://github.com/brealorg/ferietur/issues).
+
+Når du rapporterer beregningsfeil, beskriv gjerne **hvilket oppsett du valgte, hvilke tidsperioder som ble registrert og hvilket resultat du forventet**. Ikke legg ved personopplysninger eller sensitive opplysninger fra faktiske brukere.
