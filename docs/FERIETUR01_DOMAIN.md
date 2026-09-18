@@ -49,13 +49,17 @@ Movable Easter, Ascension and Pentecost dates are calculated from the calendar y
 
 Saturday/Sunday allowance is removed from minutes that already receive point 12.2.3 holiday/high-day supplement, because point 12.2.2 excludes work that is compensated under another provision by more than 50 percent.
 
-## Point-20.2 rule priority — A4.1
+## Point-20.2 applicability — EQS01B1
 
-Once the comparison model classifies minutes as work compensated under Dok. 25 point 20.2, the app pays hourly wage + 50 percent for those minutes and does not stack ordinary-service supplements from point 12.1.1 or 12.2.2 on the same minutes. Point 12.1.1 concerns ordinary service and explicitly excludes overtime; point 12.2.2 concerns ordinary service and also excludes overtime.
+The stored normal roster is a comparison and control source. It is no longer allowed to decide by itself which registered periods receive Dok. 25 point 20.2 compensation.
 
-On the special holiday dates listed in point 13.7.3, the app still uses point 20.2 for the same chapter-20 minutes. Point 13.1 makes chapter 13 applicable unless the tariff agreement provides otherwise; point 20.2 is the specific holiday-stay provision and expressly sets hourly wage + 50 percent for worktime beyond ordinary worktime.
+Oslo kommune EQS ID 53398 states that the work plan for a holiday stay may differ from the ordinary roster without the change itself creating overtime when the plan is changed with at least 14 days notice and otherwise satisfies the working-time rules. `HolidayWorkPlanStatus` therefore enters the production runtime explicitly.
 
-These two interactions are therefore implemented rule-priority decisions in ruleset 2026.2 rather than open possible additions. This does not remove the separate comparison-model assumption: the stored ground roster remains an app comparison basis, not a verbatim substitute for the holiday-stay work plan required by point 20.2.
+EQS01B1 is deliberately fail-closed. The current work-period model cannot yet distinguish, period by period, work that belongs to the approved holiday work plan from work performed beyond that plan. For `TURNUS_PLUS_EXTERNAL` calculations with an explicit holiday-work-plan status, Ferietur therefore does **not** convert minutes outside the stored normal roster to hourly wage + 50 percent. Instead it emits unresolved rule `D25_20_2_WORK_PLAN_SCOPE` and keeps the uncertain amount outside the payment basis.
+
+The nullable runtime parameter exists only as a migration/predecessor compatibility bridge while EQS01B is under development. The Android app runtime always supplies the explicit status. EQS01B2 must introduce the period-level duty/work-plan relation before point 20.2 can again be priced automatically.
+
+The existing rule-priority behavior for minutes that are eventually proven to fall under point 20.2 remains conceptually separate: ordinary-service supplements must not be inferred or stacked merely because a period lies outside the old ground roster.
 
 ## Payment proposal
 
@@ -107,3 +111,73 @@ Kildebindingen dekker Dok. 25 punkt 8.9, 12.1.1, 12.2.2, 12.2.3, 20.3 og
 
 PILOT01-001 endrer ikke divisor, tilleggssatser, lønnstabell, tariffpakke,
 rate-set, regelsettversjon eller pengeberegning.
+## EQS01B2B1 — feriearbeidsplan per aktiv periode
+
+Når arbeidsgiver er Oslo kommune og feriearbeidsplanen er registrert som godkjent og varslet
+minst 14 dager før, bruker Ferietur den eksplisitte perioderelasjonen som klassifiseringsgrunnlag:
+
+- `WITHIN_HOLIDAY_WORK_PLAN`: planlagt ordinær tjeneste. Grunnlønn legges ikke til på nytt.
+  Relevante ordinære kapittel-12-tillegg kan inngå i betalingsgrunnlaget.
+- `BEYOND_HOLIDAY_WORK_PLAN`: aktiv arbeidstid/reise med ansvar som behandles etter Dok. 25
+  punkt 20.2 med timelønn + 50 prosent.
+- `NOT_CLARIFIED`: punkt 20.2 holdes åpent og beløpet prises ikke positivt.
+
+Den lagrede grunnturnusen er fortsatt tilgjengelig som kontroll- og sammenligningsinformasjon,
+men brukes ikke som positiv punkt-20.2-klassifikator når den eksplisitte ferieplanmodellen er aktiv.
+
+`NOT_APPROVED_OR_LATE` betyr fortsatt ikke automatisk overtid. Ferietur holder aktiv tid åpen i
+den tilstanden.
+
+B2B1 endrer ikke reise uten tilsynsansvar (`TravelDutyStatus`) eller hvilende nattevakt.
+Disse områdene kvalifiseres separat i B2B2/B2C.
+## EQS01B2B2 — vaktstatus under reise uten tilsynsansvar
+
+For `TURNUS_PLUS_EXTERNAL` med eksplisitt feriearbeidsplanstatus brukes `TravelDutyStatus` som
+faktagrunnlag for reise uten tilsynsansvar.
+
+- `ON_DUTY`: ordinære reisedeler teller som arbeidstid. Ved godkjent feriearbeidsplan bruker
+  perioden også `HolidayWorkPlanRelation`; innenfor planen er den planlagt tjeneste, mens utover
+  planen kan behandles etter punkt 20.2.
+- `OFF_DUTY`: ordinære reisedeler behandles etter punkt 18.4 med reisetidsbetaling og teller ikke
+  som arbeidstid.
+- `NOT_CLARIFIED`: ordinær reisetid prises ikke positivt; `D25_20_3_TRAVEL_DUTY_STATUS` holdes åpen.
+
+Søvntillatelse kl. 23–07 er fortsatt et separat faktum. Reise med søvntillatelse behandles etter
+punkt 20.3 som passiv arbeidstid og teller som arbeidstid time for time.
+
+Grunnturnusen beholdes som sammenligningsinformasjon og legacy-fallback for historiske perioder,
+men er ikke positiv vaktstatusklassifikator i den eksplisitte B2B2-modellen.
+
+B2B2 endrer ikke hvilende nattevakt. Det området kvalifiseres i EQS01B2C.
+## EQS01B2C — hvilende nattevakt under ferieopphold
+Dok. 25 punkt 20.4 er en spesifikk ferieoppholdsregel for nattevakt mellom kl. 23:00 og 07:00.
+Nattevakten skal normalt innrettes som arbeid av passiv karakter. Tiden regnes som arbeidstid
+time for time, mens én time passiv vakt betales med 1/3 timelønn. Kapittel-12-tillegg på passivt
+arbeid følger 1:3 etter punkt 8.9.
+
+Når den eksplisitte feriearbeidsplanmodellen er aktiv, bruker Ferietur derfor den registrerte
+`RESTING_NIGHT_WATCH` direkte som kilde til punkt 20.4. Den lagrede grunnturnusen avgjør ikke
+om den registrerte ferie-nattevakten får 1:3-behandling.
+
+`HolidayWorkPlanRelation` brukes ikke som et ekstra betalingsvilkår for hvilende natt. Punkt 20.4
+regulerer nattevakten særskilt under oppholdet. Aktivt arbeid inne i den hvilende vakten følger
+fortsatt den egne punkt-20.4-regelen med +50 prosent og avrunding per vakt.
+
+En null `HolidayWorkPlanStatus` beholder den gamle grunnturnusavgrensningen kun for
+legacy/predecessor-kompatibilitet. Appens produksjonsruntime sender eksplisitt status.
+## EQS01C — ruleset 2026.4 og samlet kvalifisering
+
+Ruleset `2026.4` markerer den samlede beregningssemantiske endringen fra EQS01A/B:
+
+- feriearbeidsplanstatus er eksplisitt og kreves før Oslo-finalisering;
+- aktiv tid klassifiseres per periode mot feriearbeidsplanen, ikke mot grunnturnusen;
+- arbeid utover godkjent feriearbeidsplan behandles etter Dok. 25 punkt 20.2;
+- ordinære kapittel-12-tillegg hentes fra planlagt tjeneste i feriearbeidsplanen;
+- reise uten tilsynsansvar skiller eksplisitt mellom på vakt, ikke på vakt og uavklart;
+- hvilende nattevakt under ferieopphold behandles direkte etter punkt 20.4 i den eksplisitte modellen;
+- grunnturnusen beholdes som sammenlignings-/kontrollgrunnlag og legacy-fallback, ikke som
+  positiv klassifiseringsfasit for de nye ferieplansemantikkene.
+
+Persistensformatene for draft/snapshot er allerede kvalifisert i EQS01B2A. Ruleset-bumpen endrer
+ikke snapshotformatet; nye finaliseringer fryser `2026.4`, mens historiske snapshots beholder den
+ruleset-versjonen de ble opprettet med.

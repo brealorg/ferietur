@@ -154,6 +154,260 @@ object TripPlanEngine {
             RosterEntryCodec.decode(roster[date]).flatMap(::plannedBlocksForShift)
         }
 
+    /**
+     * UX01B data-entry helper. Invoked only by an explicit user action.
+     *
+     * Ground-roster shifts become an editable starting point for the factual work plan,
+     * clipped to the trip boundary. Existing travel is overlaid afterwards. The created
+     * work periods remain NOT_CLARIFIED against the holiday work plan: copying the roster
+     * is convenience, not tariff classification.
+     */
+    fun seedPlanFromRosterForEditing(
+        dates: List<LocalDate>,
+        roster: Map<LocalDate, String>,
+        existingPlans: Map<LocalDate, List<PlannedBlock>>,
+        tripStart: LocalDateTime,
+        tripEnd: LocalDateTime,
+    ): Map<LocalDate, List<PlannedBlock>> {
+        require(existingPlans.values.flatten().none { !it.kind.isTravelKind() }) {
+            "Roster seed is only allowed before non-travel work has been registered"
+        }
+        val rosterSeed = dates.associateWith { date ->
+            RosterEntryCodec.decode(roster[date])
+                .flatMap { shift -> plannedBlocksForShiftWithinTrip(date, shift, tripStart, tripEnd) }
+                .map {
+                    it.copy(
+                        holidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED,
+                    )
+                }
+        }
+        val existingTravel = dates.associateWith { date ->
+            existingPlans[date].orEmpty().filter { it.kind.isTravelKind() }
+        }
+        return overlayTravelOnPlan(dates, rosterSeed, existingTravel)
+    }
+
+        private fun blockUsesHolidayWorkPlanRelation(block: PlannedBlock): Boolean =
+        block.kind == TimeKind.ACTIVE_WORK ||
+            block.kind == TimeKind.ACTIVE_NIGHT_WATCH ||
+            block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ||
+            (
+                block.kind.isTravelWithoutResponsibility() &&
+                    block.travelDutyStatus == TravelDutyStatus.ON_DUTY
+            )
+
+    /**
+     * UX02A: derive point-20.2 relation from approved holiday work plan vs actual work.
+     * Ground roster is deliberately not an input.
+     */
+    fun deriveHolidayWorkPlanRelations(
+        dates: List<LocalDate>,
+        actualPlans: Map<LocalDate, List<PlannedBlock>>,
+        holidayPlans: Map<LocalDate, List<PlannedBlock>>,
+    ): Map<LocalDate, List<PlannedBlock>> {
+        require(holidayPlans.values.flatten().isNotEmpty()) {
+            "Holiday work plan must be recorded before relations can be derived"
+        }
+
+        val holidayCoverage = mergePairs(
+            projectRange(dates, holidayPlans)
+                .filter(::countsAsHolidayPlanDuty)
+                .map { it.start to it.end },
+        )
+        val result = dates.associateWith { mutableListOf<PlannedBlock>() }.toMutableMap()
+
+        actualPlans.toSortedMap().forEach { (sourceDate, sourceBlocks) ->
+            sourceBlocks.forEach { source ->
+                if (!blockUsesHolidayWorkPlanRelation(source)) {
+                    result.getOrPut(sourceDate) { mutableListOf() } += source.copy(
+                        holidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED,
+                    )
+                    return@forEach
+                }
+
+                val actual = source.toWorkBlock(sourceDate)
+                val inside = mergePairs(
+                    holidayCoverage.mapNotNull { (planStart, planEnd) ->
+                        intersection(actual.start, actual.end, planStart, planEnd)
+                    },
+                )
+                val outside = subtractIntervals(actual.start, actual.end, inside)
+
+                inside.forEach { (start, end) ->
+                    appendDerivedPlanSegment(
+                        result,
+                        source,
+                        start,
+                        end,
+                        HolidayWorkPlanRelation.WITHIN_HOLIDAY_WORK_PLAN,
+                    )
+                }
+                outside.forEach { (start, end) ->
+                    appendDerivedPlanSegment(
+                        result,
+                        source,
+                        start,
+                        end,
+                        HolidayWorkPlanRelation.BEYOND_HOLIDAY_WORK_PLAN,
+                    )
+                }
+            }
+        }
+
+        return result.mapValues { (_, blocks) ->
+            blocks.sortedWith(compareBy<PlannedBlock>({ it.start }, { it.end }, { it.kind.name }))
+        }
+    }
+
+    private fun countsAsHolidayPlanDuty(block: WorkBlock): Boolean =
+        block.kind == TimeKind.ACTIVE_WORK ||
+            block.kind == TimeKind.ACTIVE_NIGHT_WATCH ||
+            block.kind == TimeKind.RESTING_NIGHT_WATCH ||
+            block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ||
+            (
+                block.kind.isTravelWithoutResponsibility() &&
+                    block.travelDutyStatus == TravelDutyStatus.ON_DUTY
+            )
+
+    private fun appendDerivedPlanSegment(
+        result: MutableMap<LocalDate, MutableList<PlannedBlock>>,
+        source: PlannedBlock,
+        start: LocalDateTime,
+        end: LocalDateTime,
+        relation: HolidayWorkPlanRelation,
+    ) {
+        var cursor = start
+        while (cursor.isBefore(end)) {
+            val date = cursor.toLocalDate()
+            val midnight = date.plusDays(1).atStartOfDay()
+            val segmentEnd = if (end.isBefore(midnight)) end else midnight
+            result.getOrPut(date) { mutableListOf() } += source.copy(
+                start = cursor.toLocalTime(),
+                end = if (segmentEnd == midnight) LocalTime.MIDNIGHT else segmentEnd.toLocalTime(),
+                holidayWorkPlanRelation = relation,
+            )
+            cursor = segmentEnd
+        }
+    }
+
+    /**
+     * Runtime bridge for UX02. Raw draft `plans` remain factual actual work. For the Oslo
+     * holiday-plan model the relation needed by point 20.2 is derived immediately before
+     * calculation/presentation/finalization.
+     *
+     * Missing holiday-plan data never means "everything is overtime": stale/manual relation
+     * values are cleared so the existing fail-closed point-20.2 rule remains open.
+     */
+    /**
+     * Select the factual calculation baseline without guessing who made a plan.
+     *
+     * NORMAL_ROSTER_APPLIES: the employer did not set a separate trip plan, so
+     * ground roster remains the point-20.2 comparison baseline.
+     *
+     * EMPLOYER_SET_TRIP_PLAN: the employer did set a separate trip plan, so UX02
+     * derives within/beyond relation from that plan versus recorded work.
+     *
+     * NOT_CLARIFIED: clear any stale relation values and let the existing explicit
+     * fail-closed rule keep point 20.2 open.
+     */
+    fun runtimePlansForWorkPlanBasis(
+        fundingMode: FundingMode,
+        workPlanBasis: TripWorkPlanBasis,
+        dates: List<LocalDate>,
+        actualPlans: Map<LocalDate, List<PlannedBlock>>,
+        holidayPlans: Map<LocalDate, List<PlannedBlock>>,
+    ): Map<LocalDate, List<PlannedBlock>> {
+        if (fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL) return actualPlans
+
+        return when (workPlanBasis) {
+            TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                runtimePlansForHolidayWorkPlanComparison(
+                    fundingMode = fundingMode,
+                    dates = dates,
+                    actualPlans = actualPlans,
+                    holidayPlans = holidayPlans,
+                )
+
+            TripWorkPlanBasis.NORMAL_ROSTER_APPLIES,
+            TripWorkPlanBasis.NOT_CLARIFIED,
+            -> dates.associateWith { date ->
+                actualPlans[date].orEmpty().map { block ->
+                    block.copy(holidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED)
+                }
+            }
+        }
+    }
+
+    /**
+     * Existing calculation semantics use null status for the ground-roster
+     * comparison path and explicit status for the employer-trip-plan path.
+     */
+    fun calculationHolidayWorkPlanStatusForBasis(
+        fundingMode: FundingMode,
+        workPlanBasis: TripWorkPlanBasis,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus,
+    ): HolidayWorkPlanStatus? {
+        if (fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL) return holidayWorkPlanStatus
+        return when (workPlanBasis) {
+            TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> null
+            TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN -> holidayWorkPlanStatus
+            TripWorkPlanBasis.NOT_CLARIFIED -> HolidayWorkPlanStatus.NOT_CLARIFIED
+        }
+    }
+
+    fun runtimePlansForHolidayWorkPlanComparison(
+        fundingMode: FundingMode,
+        dates: List<LocalDate>,
+        actualPlans: Map<LocalDate, List<PlannedBlock>>,
+        holidayPlans: Map<LocalDate, List<PlannedBlock>>,
+    ): Map<LocalDate, List<PlannedBlock>> {
+        if (fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL) return actualPlans
+        if (holidayPlans.values.flatten().isEmpty()) {
+            return dates.associateWith { date ->
+                actualPlans[date].orEmpty().map {
+                    it.copy(holidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED)
+                }
+            }
+        }
+        return deriveHolidayWorkPlanRelations(
+            dates = dates,
+            actualPlans = actualPlans,
+            holidayPlans = holidayPlans,
+        )
+    }
+
+    /**
+     * Convenience used when the user advances from Feriearbeidsplan to Faktisk arbeid.
+     * The approved plan is copied as the factual starting point only when no non-travel
+     * actual work has already been registered. Existing actual travel is preserved.
+     *
+     * The point-20.2 relation is deliberately cleared; runtime derives it afterwards.
+     */
+    fun seedActualWorkFromHolidayPlan(
+        dates: List<LocalDate>,
+        holidayPlans: Map<LocalDate, List<PlannedBlock>>,
+        existingActualPlans: Map<LocalDate, List<PlannedBlock>> = emptyMap(),
+    ): Map<LocalDate, List<PlannedBlock>> {
+        require(existingActualPlans.values.flatten().none { !it.kind.isTravelKind() }) {
+            "Actual-work seed is only allowed before non-travel actual work has been registered"
+        }
+
+        val base = dates.associateWith { date ->
+            holidayPlans[date].orEmpty()
+                .filterNot { it.kind == TimeKind.ACTIVE_EVENT_ON_RESTING }
+                .map { block ->
+                    block.copy(
+                        travelNoticeStatus = TravelNoticeStatus.NOT_CLARIFIED,
+                        holidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED,
+                    )
+                }
+        }
+        val actualTravel = dates.associateWith { date ->
+            existingActualPlans[date].orEmpty().filter { it.kind.isTravelKind() }
+        }
+        return overlayTravelOnPlan(dates, base, actualTravel)
+    }
+
     fun hasRosterOverlap(roster: Map<LocalDate, String>): Boolean {
         val intervals = roster.flatMap { (date, value) ->
             RosterEntryCodec.decode(value).mapNotNull { shift ->
@@ -201,7 +455,7 @@ object TripPlanEngine {
                 val visible = intersection(original.start, original.end, dayStart, dayEnd) ?: return@mapNotNull null
                 DayProjectedBlock(
                     sourceDate = sourceDate,
-                    block = WorkBlock(visible.first, visible.second, original.kind, original.travelNoticeStatus),
+                    block = original.copy(start = visible.first, end = visible.second),
                     continuesFromPreviousDay = original.start.isBefore(dayStart),
                     continuesIntoNextDay = original.end.isAfter(dayEnd),
                 )
@@ -241,6 +495,7 @@ object TripPlanEngine {
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
         rateSet: TariffRateSet = FerieturTariffRates.current,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): PreliminaryCalculation {
         val blocks = projectRange(dates, plans)
         return calculatePreliminaryFromProjectedBlocks(
@@ -254,6 +509,7 @@ object TripPlanEngine {
             tripStart = tripStart,
             tripEnd = tripEnd,
             rateSet = rateSet,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
     }
 
@@ -279,14 +535,31 @@ object TripPlanEngine {
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
         rateSet: TariffRateSet = FerieturTariffRates.current,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): PreliminaryCalculation {
         val tariffLabel = FerieturTariffs.requireById(rateSet.tariffPackageId).label
         val hourlyRate = TariffMath.hourlyRate(annualSalary, weeklyBasis, rateSet)
-        val activeBlocks = normalizedActiveBlocks(blocks)
+        val explicitHolidayPlanSemantics =
+            fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && holidayWorkPlanStatus != null
+        val travelWithoutResponsibilityBlocks = blocks.filter { it.kind.isTravelWithoutResponsibility() }
+        val onDutyTravelActiveBlocks =
+            if (explicitHolidayPlanSemantics) {
+                travelWithoutResponsibilityBlocks
+                    .filter { it.travelDutyStatus == TravelDutyStatus.ON_DUTY }
+                    .flatMap { block -> ordinaryTravelParts(block, rateSet) }
+            } else {
+                emptyList()
+            }
+        val activeBlocks =
+            (normalizedActiveBlocks(blocks) + onDutyTravelActiveBlocks).sortedBy { it.start }
         val restingBlocks = blocks.filter { it.kind == TimeKind.RESTING_NIGHT_WATCH }
         val activeEventBlocks = blocks.filter { it.kind == TimeKind.ACTIVE_EVENT_ON_RESTING }
-        val travelWithoutResponsibilityBlocks = blocks.filter { it.kind.isTravelWithoutResponsibility() }
         val uncertainTravelBlocks = blocks.filter { it.kind == TimeKind.TRAVEL_UNCERTAIN }
+        val approvedHolidayPlanSemantics =
+            explicitHolidayPlanSemantics &&
+                holidayWorkPlanStatus == HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED
+        val legacyGroundRosterSemantics =
+            fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && holidayWorkPlanStatus == null
 
         val activeMinutes = activeBlocks.sumOf(::durationMinutes)
         val restingMinutes = restingBlocks.sumOf(::durationMinutes)
@@ -295,9 +568,19 @@ object TripPlanEngine {
         val activeOutside = activeMinutes - activeInside
         val restingOutside = restingMinutes - restingInside
 
-        val payableActiveBlocks = when (fundingMode) {
-            FundingMode.TURNUS_PLUS_EXTERNAL -> activeBlocks.flatMap { block -> outsideWorkBlocks(block, roster) }
-            FundingMode.VACATION_SEPARATE, FundingMode.MUNICIPAL_ALL, FundingMode.CUSTOM -> activeBlocks
+        val openHolidayPlanActiveBlocks = when {
+            approvedHolidayPlanSemantics ->
+                activeBlocks.filter { it.holidayWorkPlanRelation == HolidayWorkPlanRelation.NOT_CLARIFIED }
+            explicitHolidayPlanSemantics -> activeBlocks
+            else -> emptyList()
+        }
+        val payableActiveBlocks = when {
+            approvedHolidayPlanSemantics ->
+                activeBlocks.filter { it.holidayWorkPlanRelation == HolidayWorkPlanRelation.BEYOND_HOLIDAY_WORK_PLAN }
+            explicitHolidayPlanSemantics -> emptyList()
+            fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL ->
+                activeBlocks.flatMap { block -> outsideWorkBlocks(block, roster) }
+            else -> activeBlocks
         }
         val payableActiveWorkMinutes = payableActiveBlocks
             .filter { it.kind == TimeKind.ACTIVE_WORK || it.kind == TimeKind.ACTIVE_NIGHT_WATCH }
@@ -305,17 +588,50 @@ object TripPlanEngine {
         val payableTravelWithResponsibilityMinutes = payableActiveBlocks
             .filter { it.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY }
             .sumOf(::durationMinutes)
-        val outsideActiveEvidence = payableActiveBlocks.map { block ->
+        val payableOnDutyTravelWithoutResponsibilityMinutes = payableActiveBlocks
+            .filter { it.kind.isTravelWithoutResponsibility() }
+            .sumOf(::durationMinutes)
+        val payableTravelMinutes =
+            payableTravelWithResponsibilityMinutes + payableOnDutyTravelWithoutResponsibilityMinutes
+        val activePaymentEvidence = payableActiveBlocks.map { block ->
             evidence(
                 block,
-                if (block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY) "Reise med ansvar utenfor grunnturnusen" else "Arbeid utenfor grunnturnusen",
+                when {
+                    approvedHolidayPlanSemantics && block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ->
+                        "Reise med ansvar · beregnet utover feriearbeidsplanen"
+                    approvedHolidayPlanSemantics && block.kind.isTravelWithoutResponsibility() ->
+                        "Reise uten tilsynsansvar · på vakt · beregnet utover feriearbeidsplanen"
+                    approvedHolidayPlanSemantics ->
+                        "Aktivt arbeid · beregnet utover feriearbeidsplanen"
+                    block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ->
+                        "Reise med ansvar utenfor grunnturnusen"
+                    else ->
+                        "Arbeid utenfor grunnturnusen"
+                },
             )
         }
-        val payableRestingBlocks = when (fundingMode) {
-            FundingMode.TURNUS_PLUS_EXTERNAL -> restingBlocks.flatMap { outsideWorkBlocks(it, roster) }
-            FundingMode.VACATION_SEPARATE, FundingMode.MUNICIPAL_ALL, FundingMode.CUSTOM -> restingBlocks
+        val payableRestingBlocks = when {
+            // Point 20.4 is the specific vacation-stay night-watch rule. In the modern
+            // explicit holiday-plan path its 1:3 treatment applies to the registered
+            // resting watch itself; the stored ground roster is comparison only.
+            explicitHolidayPlanSemantics -> restingBlocks
+            fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL ->
+                restingBlocks.flatMap { outsideWorkBlocks(it, roster) }
+            else ->
+                restingBlocks
         }
-        val outsideRestingEvidence = payableRestingBlocks.map { evidence(it, "Hvilende nattevakt utenfor grunnturnusen") }
+        val restingPaymentEvidence = payableRestingBlocks.map { block ->
+            evidence(
+                block,
+                if (explicitHolidayPlanSemantics) {
+                    "Hvilende nattevakt · punkt 20.4 · grunnturnus kun sammenligning"
+                } else if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
+                    "Hvilende nattevakt utenfor grunnturnusen"
+                } else {
+                    "Hvilende nattevakt"
+                },
+            )
+        }
 
         val lines = mutableListOf<CalculationLine>()
         val payableActiveMinutes = payableActiveBlocks.sumOf(::durationMinutes)
@@ -325,39 +641,98 @@ object TripPlanEngine {
             val breakdown = buildList {
                 if (payableActiveWorkMinutes > 0) add("${minutesLabel(payableActiveWorkMinutes)} arbeid")
                 if (payableTravelWithResponsibilityMinutes > 0) add("${minutesLabel(payableTravelWithResponsibilityMinutes)} reise med ansvar")
+                if (payableOnDutyTravelWithoutResponsibilityMinutes > 0) {
+                    add("${minutesLabel(payableOnDutyTravelWithoutResponsibilityMinutes)} reise uten tilsynsansvar på vakt")
+                }
             }.joinToString(" + ")
             lines += CalculationLine(
                 id = "active",
                 title = when {
-                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelWithResponsibilityMinutes > 0 -> "Arbeid og reise utenfor grunnturnusen"
-                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "Arbeid utenfor grunnturnusen"
-                    payableTravelWithResponsibilityMinutes > 0 -> "Aktivt arbeid og reise med ansvar"
-                    else -> "Aktivt arbeid"
+                    approvedHolidayPlanSemantics && payableTravelMinutes > 0 ->
+                        "Arbeid og reise utover feriearbeidsplanen"
+                    approvedHolidayPlanSemantics ->
+                        "Arbeid utover feriearbeidsplanen"
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelMinutes > 0 ->
+                        "Arbeid og reise utenfor grunnturnusen"
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL ->
+                        "Arbeid utenfor grunnturnusen"
+                    payableTravelMinutes > 0 ->
+                        "Aktivt arbeid og reise med ansvar"
+                    else ->
+                        "Aktivt arbeid"
                 },
                 detail = buildString {
                     append(minutesLabel(payableActiveMinutes))
-                    if (breakdown.isNotBlank() && payableTravelWithResponsibilityMinutes > 0) append(" ($breakdown)")
+                    if (breakdown.isNotBlank() && payableTravelMinutes > 0) append(" ($breakdown)")
                     append(" × ${moneyRate(hourlyRate)}")
                     if (activeMultiplier > BigDecimal.ONE) append(" × ${decimalLabel(activeMultiplier, 2)}")
                 },
                 amount = amount,
                 source = when {
-                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelWithResponsibilityMinutes > 0 -> "$tariffLabel, punkt 20.2 og 20.3"
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL && payableTravelMinutes > 0 -> "$tariffLabel, punkt 20.2 og 20.3"
                     fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "$tariffLabel, punkt 20.2"
-                    payableTravelWithResponsibilityMinutes > 0 -> "Lønnstabellen + $tariffLabel, punkt 9.6 og 20.3"
+                    payableTravelMinutes > 0 -> "Lønnstabellen + $tariffLabel, punkt 9.6 og 20.3"
                     else -> "Lønnstabellen + $tariffLabel, punkt 9.6"
                 },
-                explanation = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                    buildString {
+                explanation = when {
+                    approvedHolidayPlanSemantics -> buildString {
+                        append("Ferietur har sammenlignet faktisk arbeid med feriearbeidsplanen og funnet disse periodene utover planen. Ferietur bruker derfor Dok. 25 punkt 20.2 og beregner tiden med timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent. Grunnturnusen brukes ikke som klassifiseringsfasit for denne posten.")
+                        if (payableTravelWithResponsibilityMinutes > 0) {
+                            append(" Reise med ansvar er med fordi reisetid med aktivt tilsyn regnes som arbeidstid etter punkt 20.3.")
+                        }
+                        if (payableOnDutyTravelWithoutResponsibilityMinutes > 0) {
+                            append(" Reise uten tilsynsansvar er med når du har registrert at du var på vakt. Reise registrert som ikke på vakt behandles separat etter reisetidsreglene.")
+                        }
+                        append(" Klassifiseringen er avledet automatisk fra den registrerte feriearbeidsplanen og det faktiske arbeidet, og må kontrolleres mot arbeidsgivers godkjente plan. På minutter som behandles etter punkt 20.2 legger appen ikke samtidig til ordinære kveld-/natt-, helge- eller høytidstillegg fra kapittel 12.")
+                    }
+                    fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> buildString {
                         append("I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag for arbeid som er forutsatt dekket gjennom ordinær lønn. Timer modellen klassifiserer som arbeid i tillegg til grunnturnusen beregnes her med timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent. Dok. 25 punkt 20.2 fastsetter at arbeidstid ut over ordinær arbeidstid etter kapittel 8 kompenseres med timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent.")
                         if (payableTravelWithResponsibilityMinutes > 0) append(" Reise med ansvar for beboeren er med i disse timene fordi reisetid med aktivt tilsyn regnes som arbeidstid etter punkt 20.3.")
                         append(" Hvilken arbeidsplan og eventuell gjennomsnittsberegning som gjelder for ferieoppholdet må avklares med arbeidsgiver. På de samme minuttene som modellen behandler etter punkt 20.2, legger appen ikke til kveld-/nattillegg eller lørdags-/søndagstillegg fra kapittel 12. Punkt 12.1.1 gjelder ordinær tjeneste og sier uttrykkelig at kvelds-/nattillegget ikke utbetales for overtid; punkt 12.2.2 gjelder ordinær tjeneste og utelukker overtid. For særskilte høytidsdager bruker appen punkt 20.2 som den spesifikke ferieoppholdsregelen: kapittel 13 gjelder etter punkt 13.1 dersom ikke annet er fastsatt i tariffavtalen, mens punkt 20.2 fastsetter timelønn pluss ${percentLabel(rateSet.chapter20ActiveMultiplier.subtract(BigDecimal.ONE))} prosent for arbeidstid ut over ordinær arbeidstid under ferieoppholdet.")
                     }
-                } else {
-                    "Aktivt arbeid beregnes med timelønnen som følger av lønnstrinnet og den valgte arbeidsuken. Grunnturnusen brukes ikke som sammenligningsgrunnlag i denne beregningsmåten. Arbeidsgiverforhold og betalingsscenario håndteres separat."
+                    else ->
+                        "Aktivt arbeid beregnes med timelønnen som følger av lønnstrinnet og den valgte arbeidsuken. Grunnturnusen brukes ikke som sammenligningsgrunnlag i denne beregningsmåten. Arbeidsgiverforhold og betalingsscenario håndteres separat."
                 },
-                evidence = outsideActiveEvidence,
+                evidence = activePaymentEvidence,
                 certainty = CalculationCertainty.ASSUMPTION,
+            )
+        }
+
+        if (openHolidayPlanActiveBlocks.isNotEmpty()) {
+            val statusLabel = when (holidayWorkPlanStatus) {
+                HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED ->
+                    "Feriearbeidsplanen er oppgitt som godkjent og varslet minst 14 dager før, men forholdet til planen er ikke angitt for disse periodene."
+                HolidayWorkPlanStatus.NOT_APPROVED_OR_LATE ->
+                    "Feriearbeidsplanen er oppgitt som ikke godkjent eller varslet senere enn 14 dager før. Denne statusen gjør ikke periodene automatisk til punkt 20.2-arbeid."
+                HolidayWorkPlanStatus.NOT_CLARIFIED ->
+                    "Feriearbeidsplanens status er ikke avklart."
+                null ->
+                    "Feriearbeidsplanens status er ikke tilgjengelig."
+            }
+            val openActiveMinutes = openHolidayPlanActiveBlocks.sumOf(::durationMinutes)
+            lines += CalculationLine(
+                id = "holiday-work-plan-scope-open",
+                title = "Forholdet til feriearbeidsplanen må avklares",
+                detail = "${minutesLabel(openActiveMinutes)} aktiv tid holdes åpen · ingen automatisk +50 %-klassifisering",
+                amount = moneyAmount(BigDecimal.ZERO),
+                source = "$tariffLabel, punkt 20.2 · Oslo kommune EQS ID 53398",
+                explanation = "$statusLabel Oslo kommunes EQS-rutine 53398 åpner for at arbeidsplanen under ferieoppholdet kan avvike fra den ordinære grunnturnusen uten at avviket i seg selv utløser overtid. Grunnturnusen brukes derfor ikke som fasit. Ferietur priser bare punkt 20.2 positivt når feriearbeidsplanen er oppgitt som godkjent og varslet i tide, og sammenligningen mot faktisk arbeid viser tid utover feriearbeidsplanen.",
+                evidence = openHolidayPlanActiveBlocks.map { block ->
+                    evidence(
+                        block,
+                        when {
+                            block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ->
+                                "Reise med ansvar · forholdet til feriearbeidsplanen er ikke tilstrekkelig avklart"
+                            block.kind.isTravelWithoutResponsibility() ->
+                                "Reise uten tilsynsansvar · på vakt · forholdet til feriearbeidsplanen er ikke tilstrekkelig avklart"
+                            else ->
+                                "Aktivt arbeid · forholdet til feriearbeidsplanen er ikke tilstrekkelig avklart"
+                        },
+                    )
+                },
+                certainty = CalculationCertainty.OPEN,
+                includedInKnownTotal = false,
+                paymentTreatment = PaymentTreatment.OPEN,
             )
         }
 
@@ -370,9 +745,15 @@ object TripPlanEngine {
                 detail = "${minutesLabel(payableRestingMinutes)} arbeidstid → ${passiveTimeLabel(payableRestingMinutes, rateSet)} lønnsekvivalent",
                 amount = amount,
                 source = "$tariffLabel, punkt 20.4",
-                explanation = "Hele den hvilende nattevakten teller som arbeidstid, men betalingen regnes i forholdet ${passiveRatioLabel(rateSet)}. Aktivt arbeid under vakten beregnes på en egen linje."
-                ,
-                evidence = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) outsideRestingEvidence else restingBlocks.map { evidence(it, "Hvilende nattevakt") },
+                explanation = buildString {
+                    append("Punkt 20.4 sier at nattevakt mellom kl. 23:00 og 07:00 under ferieoppholdet normalt skal innrettes som arbeid av passiv karakter. Hele den hvilende nattevakten teller som arbeidstid, mens én time passiv vakt betales med ${passiveFractionLabel(rateSet).replace("⅓", "1/3")} timelønn. Aktivt arbeid under vakten beregnes på en egen linje.")
+                    if (explicitHolidayPlanSemantics) {
+                        append(" I den eksplisitte feriearbeidsplanmodellen brukes den registrerte hvilende nattevakten direkte etter punkt 20.4. Grunnturnusen vises bare som sammenligning og avgjør ikke om 1:3-regelen gjelder.")
+                    } else if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
+                        append(" Denne legacy-beregningsveien beholder tidligere grunnturnusavgrensning for historisk/predecessor-kompatibilitet.")
+                    }
+                },
+                evidence = restingPaymentEvidence,
             )
         }
 
@@ -389,7 +770,10 @@ object TripPlanEngine {
                 detail = "${minutesLabel(restingEveningMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
                 source = "$tariffLabel, punkt 8.9, 12.1.1 og 20.4",
-                explanation = "Kveld- og nattillegget under arbeid av passiv karakter betales også i forholdet ${passiveRatioLabel(rateSet)}. Det betyr at tillegget beregnes for ${passiveShareText(rateSet)} av den registrerte hvilende tiden.",
+                explanation = buildString {
+                    append("Kveld- og nattillegget under arbeid av passiv karakter betales også i forholdet ${passiveRatioLabel(rateSet)}. Det betyr at tillegget beregnes for ${passiveShareText(rateSet)} av den registrerte hvilende tiden.")
+                    if (explicitHolidayPlanSemantics) append(" Grunnturnusen brukes ikke til å avgrense den registrerte ferie-nattevakten.")
+                },
                 evidence = restingEveningEvidence.map { it.copy(note = "${it.note} · tillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
@@ -406,7 +790,10 @@ object TripPlanEngine {
                 detail = "${minutesLabel(restingWeekendMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
                 source = "$tariffLabel, punkt 8.9, 12.2.2 og 20.4",
-                explanation = "Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet ${passiveRatioLabel(rateSet)}. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.",
+                explanation = buildString {
+                    append("Lørdags- og søndagstillegg under arbeid av passiv karakter betales i forholdet ${passiveRatioLabel(rateSet)}. Timer som samtidig ligger i en helge- eller høytidsperiode med høyere tillegg tas ikke med her.")
+                    if (explicitHolidayPlanSemantics) append(" Grunnturnusen brukes ikke til å avgrense den registrerte ferie-nattevakten.")
+                },
                 evidence = restingWeekendEvidence.map { it.copy(note = "${it.note} · tillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
@@ -423,13 +810,39 @@ object TripPlanEngine {
                 detail = "${minutesLabel(restingHolidayMinutes)} hvilende × ${passiveFractionLabel(rateSet)} × ${moneyRate(rate)}",
                 amount = amount,
                 source = "$tariffLabel, punkt 8.9, 12.2.3 og 20.4",
-                explanation = "I helge- og høytidsperiodene i punkt 12.2.3 er tillegget ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)} timelønn per time i tillegg til ordinær lønn. Under hvilende nattevakt betales også dette tillegget i forholdet ${passiveRatioLabel(rateSet)}.",
+                explanation = buildString {
+                    append("I helge- og høytidsperiodene i punkt 12.2.3 er tillegget ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)} timelønn per time i tillegg til ordinær lønn. Under hvilende nattevakt betales også dette tillegget i forholdet ${passiveRatioLabel(rateSet)}.")
+                    if (explicitHolidayPlanSemantics) append(" Grunnturnusen brukes ikke til å avgrense den registrerte ferie-nattevakten.")
+                },
                 evidence = restingHolidayEvidence.map { it.copy(note = "${it.note} · høytidstillegget betales ${passiveRatioLabel(rateSet)}") },
                 certainty = CalculationCertainty.CONFIRMED,
             )
         }
 
-        val eveningEvidence = eveningNightEvidence(fundingMode, activeBlocks, roster, tripStart, tripEnd, rateSet)
+        val ordinarySupplementPaymentTreatment =
+            if (legacyGroundRosterSemantics) {
+                PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER
+            } else {
+                PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS
+            }
+        val ordinarySupplementTreatmentExplanation = when {
+            legacyGroundRosterSemantics ->
+                " I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen."
+            approvedHolidayPlanSemantics ->
+                " Posten beregnes fra aktiv tid du har registrert som innenfor feriearbeidsplanen. Grunnturnusen brukes bare til sammenligning og avgjør ikke om tillegget er med."
+            else ->
+                " Posten er med i det beregnede grunnlaget for turen."
+        }
+
+        val eveningEvidence = eveningNightEvidence(
+            fundingMode,
+            activeBlocks,
+            roster,
+            tripStart,
+            tripEnd,
+            rateSet,
+            holidayWorkPlanStatus,
+        )
         val eveningMinutes = eveningEvidence.sumOf { it.minutes }
         if (eveningMinutes > 0) {
             val rate = TariffMath.eveningNightRate(hourlyRate, rateSet)
@@ -441,20 +854,24 @@ object TripPlanEngine {
                 source = "$tariffLabel, punkt 12.1.1",
                 explanation = buildString {
                     append("I relevant turnus får du ${percentLabel(rateSet.eveningNightFraction)} prosent tillegg for ordinært arbeid mellom kl. ${clockLabel(rateSet.eveningStart)} og ${clockLabel(rateSet.nightEnd)}. Er perioden en nattevakt, fortsetter tillegget til vakten slutter, men ikke lenger enn til kl. ${clockLabel(rateSet.nightWatchSupplementEnd)}. Tillegget gis ikke for overtid.")
-                    if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                        append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
-                    } else {
-                        append(" Posten er med i det beregnede grunnlaget for turen.")
-                    }
+                    append(ordinarySupplementTreatmentExplanation)
                 },
                 evidence = eveningEvidence,
                 includedInKnownTotal = true,
                 certainty = CalculationCertainty.CONFIRMED,
-                paymentTreatment = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER else PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS,
+                paymentTreatment = ordinarySupplementPaymentTreatment,
             )
         }
 
-        val weekendEvidence = weekendEvidence(fundingMode, activeBlocks, roster, weeklyBasis, tripStart, tripEnd)
+        val weekendEvidence = weekendEvidence(
+            fundingMode,
+            activeBlocks,
+            roster,
+            weeklyBasis,
+            tripStart,
+            tripEnd,
+            holidayWorkPlanStatus,
+        )
         val weekendMinutes = weekendEvidence.sumOf { it.minutes }
         if (weekendMinutes > 0) {
             val rate = TariffMath.weekendRate(hourlyRate, weekendProfile, rateSet)
@@ -466,20 +883,24 @@ object TripPlanEngine {
                 source = "$tariffLabel, punkt 12.2.2",
                 explanation = buildString {
                     append("Ordinært arbeid fra lørdag kl. 00:00 til søndag kl. 24:00 kan gi lørdags- og søndagstillegg. Timer som samtidig får helge- og høytidsdagstillegg etter punkt 12.2.3 tas ikke med her, fordi høytidstillegget behandles som den høyere særregelen for disse timene. Appen bruker helgesatsen du har kontrollert mot lønnsslippen.")
-                    if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                        append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
-                    } else {
-                        append(" Posten er med i det beregnede grunnlaget for turen.")
-                    }
+                    append(ordinarySupplementTreatmentExplanation)
                 },
                 evidence = weekendEvidence,
                 includedInKnownTotal = true,
                 certainty = CalculationCertainty.CONFIRMED,
-                paymentTreatment = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER else PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS,
+                paymentTreatment = ordinarySupplementPaymentTreatment,
             )
         }
 
-        val holidayEvidence = holidayEvidence(fundingMode, activeBlocks, roster, weeklyBasis, tripStart, tripEnd)
+        val holidayEvidence = holidayEvidence(
+            fundingMode,
+            activeBlocks,
+            roster,
+            weeklyBasis,
+            tripStart,
+            tripEnd,
+            holidayWorkPlanStatus,
+        )
         val holidayMinutes = holidayEvidence.sumOf { it.minutes }
         if (holidayMinutes > 0) {
             val rate = TariffMath.holidaySupplementRate(hourlyRate, rateSet)
@@ -491,16 +912,12 @@ object TripPlanEngine {
                 source = "$tariffLabel, punkt 12.2.3",
                 explanation = buildString {
                     append("Ved ordinær tjeneste i helge- og høytidsperiodene i punkt 12.2.3 får du et tillegg på ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)} av timelønnen per arbeidet time. Satsen som vises i regnestykket er allerede dette tillegget, altså timelønn × ${mixedFractionLabel(rateSet.holidaySupplementNumerator, rateSet.holidaySupplementDenominator)}. Den skal ikke ganges med samme faktor én gang til. Periodene er forskjellige for 33,6 timers uke og for 35,5/37,5 timer og tredelt turnus. Appen beregner datoene automatisk.")
-                    if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                        append(" I denne beregningsmåten kommer posten fra grunnturnusen og vises bare for kontroll. Den er ikke med i betalingsgrunnlaget for turen.")
-                    } else {
-                        append(" Posten er med i det beregnede grunnlaget for turen.")
-                    }
+                    append(ordinarySupplementTreatmentExplanation)
                 },
                 evidence = holidayEvidence,
                 includedInKnownTotal = true,
                 certainty = CalculationCertainty.CONFIRMED,
-                paymentTreatment = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) PaymentTreatment.ALREADY_COVERED_BY_NORMAL_ROSTER else PaymentTreatment.INCLUDED_IN_PAYMENT_BASIS,
+                paymentTreatment = ordinarySupplementPaymentTreatment,
             )
         }
 
@@ -576,6 +993,7 @@ object TripPlanEngine {
 
         var unresolvedSleepNightPayableMinutes = 0L
         var unresolvedTravelNoticePayableMinutes = 0L
+        var unresolvedTravelDutyMinutes = 0L
         var shortNoticeSpecial133PotentialAmount = BigDecimal.ZERO
         if (travelWithoutResponsibilityBlocks.isNotEmpty()) {
             val payableOrdinaryTravelBlocks = mutableListOf<WorkBlock>()
@@ -583,23 +1001,35 @@ object TripPlanEngine {
             val payableUnresolvedNightBlocks = mutableListOf<WorkBlock>()
             val shortNoticeOrdinaryTravelBlocks = mutableListOf<WorkBlock>()
             val unresolvedNoticeOrdinaryTravelBlocks = mutableListOf<WorkBlock>()
+            val unresolvedDutyOrdinaryTravelBlocks = mutableListOf<WorkBlock>()
 
             travelWithoutResponsibilityBlocks.forEach { block ->
                 val nightBlocks = travelNightBlocks(block, rateSet)
-                val nonNightBlocks = travelNonNightBlocks(block, rateSet)
-                val ordinaryParts = when (block.kind) {
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> nonNightBlocks
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP -> listOf(block)
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY -> nonNightBlocks
-                    else -> emptyList()
-                }
+                val ordinaryParts = ordinaryTravelParts(block, rateSet)
                 val passiveParts = if (block.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED) nightBlocks else emptyList()
                 val unresolvedNightParts = if (block.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY) nightBlocks else emptyList()
 
-                val payableOrdinaryForJourney = payableTravelBlocks(ordinaryParts, fundingMode, roster)
+                val payableOrdinaryForJourney = when {
+                    explicitHolidayPlanSemantics && block.travelDutyStatus == TravelDutyStatus.OFF_DUTY ->
+                        ordinaryParts
+                    explicitHolidayPlanSemantics && block.travelDutyStatus == TravelDutyStatus.NOT_CLARIFIED -> {
+                        unresolvedTravelDutyMinutes += ordinaryParts.sumOf(::durationMinutes)
+                        unresolvedDutyOrdinaryTravelBlocks += ordinaryParts
+                        emptyList()
+                    }
+                    explicitHolidayPlanSemantics ->
+                        emptyList()
+                    else ->
+                        payableTravelBlocks(ordinaryParts, fundingMode, roster)
+                }
                 payableOrdinaryTravelBlocks += payableOrdinaryForJourney
-                payablePassiveNightBlocks += payableTravelBlocks(passiveParts, fundingMode, roster)
-                payableUnresolvedNightBlocks += payableTravelBlocks(unresolvedNightParts, fundingMode, roster)
+                if (explicitHolidayPlanSemantics) {
+                    payablePassiveNightBlocks += passiveParts
+                    payableUnresolvedNightBlocks += unresolvedNightParts
+                } else {
+                    payablePassiveNightBlocks += payableTravelBlocks(passiveParts, fundingMode, roster)
+                    payableUnresolvedNightBlocks += payableTravelBlocks(unresolvedNightParts, fundingMode, roster)
+                }
 
                 when (block.travelNoticeStatus) {
                     TravelNoticeStatus.KNOWN_BY_PREVIOUS_DAY -> Unit
@@ -613,21 +1043,43 @@ object TripPlanEngine {
                 }
             }
 
+            if (unresolvedDutyOrdinaryTravelBlocks.isNotEmpty()) {
+                lines += CalculationLine(
+                    id = "travel-duty-status-open",
+                    title = "Avklar om du var på vakt under reisen",
+                    detail = "${minutesLabel(unresolvedTravelDutyMinutes)} reisetid holdes åpen",
+                    amount = moneyAmount(BigDecimal.ZERO),
+                    source = "$tariffLabel, punkt 18.4 og 20.3 · Oslo kommune EQS ID 53398",
+                    explanation = "Oslo kommunes EQS-rutine 53398 skiller mellom reise mens arbeidstakeren er på vakt og reise når arbeidstakeren ikke er i tjeneste. På-vakt-reise behandles som arbeidstid. Reise uten tilsynsansvar når arbeidstakeren ikke er på vakt behandles etter reisetidsreglene og kan godtgjøres med ordinær timelønn uten å telle som arbeidstid. Grunnturnusen brukes ikke som fasit for denne klassifiseringen.",
+                    evidence = unresolvedDutyOrdinaryTravelBlocks.map { evidence(it, "Reise uten tilsynsansvar · vaktstatus ikke avklart") },
+                    certainty = CalculationCertainty.OPEN,
+                    includedInKnownTotal = false,
+                    paymentTreatment = PaymentTreatment.OPEN,
+                )
+            }
+
             val payableOrdinaryMinutes = payableOrdinaryTravelBlocks.sumOf(::durationMinutes)
             if (payableOrdinaryMinutes > 0) {
                 val amount = moneyAmount(payForMinutes(hourlyRate, payableOrdinaryMinutes))
                 lines += CalculationLine(
                     id = "travel-without-responsibility",
-                    title = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) "Reise uten tilsynsansvar utenfor grunnturnusen" else "Reise uten tilsynsansvar",
+                    title = when {
+                        explicitHolidayPlanSemantics -> "Reise uten tilsynsansvar · ikke på vakt"
+                        fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL -> "Reise uten tilsynsansvar utenfor grunnturnusen"
+                        else -> "Reise uten tilsynsansvar"
+                    },
                     detail = "${minutesLabel(payableOrdinaryMinutes)} × ${moneyRate(hourlyRate)}",
                     amount = amount,
                     source = "$tariffLabel, punkt 18.4 og 20.3",
                     explanation = buildString {
                         append("Punkt 20.3 viser til reisetidsreglene i punkt 18.4. Reisetid uten tilsynsansvar utenom ordinær arbeidstid godtgjøres med ordinær timelønn.")
-                        if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                            append(" I denne beregningsmodellen brukes grunnturnusen som sammenligningsgrunnlag, så bare den delen av den ordinære reisetiden som ligger utenfor grunnturnusen er med i betalingsgrunnlaget.")
-                        } else {
-                            append(" I denne separate turmodellen beregnes den registrerte ordinære reisetiden med ordinær timelønn.")
+                        when {
+                            explicitHolidayPlanSemantics ->
+                                append(" Du har registrert disse periodene som reise når arbeidstakeren ikke var på vakt. Hele den ordinære reisedelen behandles derfor etter reisetidsreglene, uavhengig av hvor den ligger i den lagrede grunnturnusen. Timene teller ikke som arbeidstid i arbeidstidskontrollen.")
+                            fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL ->
+                                append(" I denne eldre sammenligningsmodellen brukes grunnturnusen som sammenligningsgrunnlag, så bare den delen av den ordinære reisetiden som ligger utenfor grunnturnusen er med i betalingsgrunnlaget.")
+                            else ->
+                                append(" I denne separate turmodellen beregnes den registrerte ordinære reisetiden med ordinær timelønn.")
                         }
                         append(" Varseltidspunktet registreres separat. Ved kort varsel beholder disse timene ordinær reisetidsbetaling, og appen legger i tillegg til overtidsprosenten for inntil ${durationWords(rateSet.shortNoticeMaxMinutes)} etter punkt 18.4 og kapittel 13. Grensen brukes én gang for den registrerte turen, slik at oppdeling i flere reiseperioder ikke ganger den opp.")
                         if (travelWithoutResponsibilityBlocks.any { it.kind == TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP && travelNightBlocks(it, rateSet).isNotEmpty() }) {
@@ -841,6 +1293,8 @@ object TripPlanEngine {
         // They are not stacked on the same minutes that this model compensates under point 20.2.
 
         val applicableUnresolvedRuleIds = buildSet {
+            if (openHolidayPlanActiveBlocks.isNotEmpty()) add("D25_20_2_WORK_PLAN_SCOPE")
+            if (unresolvedTravelDutyMinutes > 0) add("D25_20_3_TRAVEL_DUTY_STATUS")
             if (unresolvedSleepNightPayableMinutes > 0) add("D25_20_3_SLEEP_PERMISSION")
             if (unresolvedTravelNoticePayableMinutes > 0) add("D25_18_4_NOTICE")
             if (shortNoticeSpecial133PotentialAmount.signum() > 0) add("D25_18_4_X13_7_3")
@@ -1039,6 +1493,8 @@ object TripPlanEngine {
                     start = block.start.toLocalTime(),
                     end = block.end.toLocalTime(),
                     travelNoticeStatus = block.travelNoticeStatus,
+                    holidayWorkPlanRelation = block.holidayWorkPlanRelation,
+                    travelDutyStatus = block.travelDutyStatus,
                 ),
             )
         }
@@ -1050,7 +1506,7 @@ object TripPlanEngine {
             intersection(block.start, block.end, overlay.start, overlay.end)
         }
         return subtractIntervals(block.start, block.end, covered).map { (start, end) ->
-            WorkBlock(start, end, block.kind, block.travelNoticeStatus)
+            block.copy(start = start, end = end)
         }
     }
 
@@ -1166,13 +1622,17 @@ object TripPlanEngine {
         val directWorkBlocks = blocks.filter {
             !it.kind.isTravelWithoutResponsibility() && it.kind != TimeKind.TRAVEL_UNCERTAIN
         }
-        // In normal-roster mode the stored ground roster is the app's available evidence of
-        // ordinary working time. Point 18.4 counts travel in that time fully as worktime.
+        // Explicit duty status is authoritative when present. Roster intersection remains
+        // only as a legacy fallback for blocks created before TravelDutyStatus existed.
         val travelInOrdinaryWorkTime = blocks
             .filter { it.kind.isTravelWithoutResponsibility() }
             .flatMap { block ->
-                rosterIntersections(block, roster).map { overlap ->
-                    WorkBlock(overlap.start, overlap.end, block.kind, block.travelNoticeStatus)
+                when (block.travelDutyStatus) {
+                    TravelDutyStatus.ON_DUTY -> ordinaryTravelParts(block, rateSet)
+                    TravelDutyStatus.OFF_DUTY -> emptyList()
+                    TravelDutyStatus.NOT_CLARIFIED -> rosterIntersections(block, roster).map { overlap ->
+                        block.copy(start = overlap.start, end = overlap.end)
+                    }
                 }
             }
         // Point 20.3 is explicit: night travel with permission to sleep is passive work,
@@ -1233,19 +1693,31 @@ object TripPlanEngine {
         val ordinaryTravelRelevantForNotice = blocks
             .filter { it.kind.isTravelWithoutResponsibility() }
             .flatMap { block ->
-                val ordinaryParts = when (block.kind) {
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> travelNonNightBlocks(block, rateSet)
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP -> listOf(block)
-                    TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY -> travelNonNightBlocks(block, rateSet)
-                    else -> emptyList()
+                val ordinaryParts = ordinaryTravelParts(block, rateSet)
+                when (block.travelDutyStatus) {
+                    TravelDutyStatus.OFF_DUTY -> ordinaryParts
+                    TravelDutyStatus.ON_DUTY -> emptyList()
+                    TravelDutyStatus.NOT_CLARIFIED -> if (roster.isEmpty()) ordinaryParts else ordinaryParts.flatMap { outsideWorkBlocks(it, roster) }
                 }
-                if (roster.isEmpty()) ordinaryParts else ordinaryParts.flatMap { outsideWorkBlocks(it, roster) }
             }
-        if (blocks.any { it.kind.isTravelWithoutResponsibility() }) {
+        val travelWithoutResponsibility = blocks.filter { it.kind.isTravelWithoutResponsibility() }
+        if (travelWithoutResponsibility.any { it.travelDutyStatus == TravelDutyStatus.NOT_CLARIFIED }) {
+            findings += ControlFinding(
+                FindingSeverity.OPEN,
+                "Avklar om du var på vakt under reisen",
+                "Minst én reise uten tilsynsansvar mangler vaktstatus. På-vakt-reise teller som arbeidstid; reise når arbeidstakeren ikke var på vakt behandles etter reisetidsreglene og teller ikke som arbeidstid, med passiv nattreise som eget unntak.",
+            )
+        }
+        if (travelWithoutResponsibility.isNotEmpty()) {
+            val explicitDutyComplete = travelWithoutResponsibility.all { it.travelDutyStatus != TravelDutyStatus.NOT_CLARIFIED }
             findings += ControlFinding(
                 FindingSeverity.REVIEW,
                 "Reise uten tilsynsansvar er behandlet etter reisetidsreglene",
-                "Punkt 18.4 brukes for ordinær reisetid. Den delen som faller i grunnturnusen regnes fullt ut som arbeidstid i kontrollen. Reisetid utenfor grunnturnusen godtgjøres med ordinær timelønn når ikke særregelen om passiv nattreise i punkt 20.3 gjelder. Varseltidspunktet brukes bare for den ordinære reisetiden som faktisk ligger utenfor ordinær arbeidstid.",
+                if (explicitDutyComplete) {
+                    "Vaktstatusen på reiseperiodene brukes som klassifiseringsgrunnlag. Reise registrert som på vakt teller som arbeidstid. Reise registrert som ikke på vakt behandles etter punkt 18.4, godtgjøres som reisetid og teller ikke som arbeidstid. Passiv nattreise etter punkt 20.3 teller likevel som arbeidstid time for time."
+                } else {
+                    "Punkt 18.4 brukes for ordinær reisetid. Den delen som faller i grunnturnusen regnes fullt ut som arbeidstid i kontrollen. Reisetid utenfor grunnturnusen godtgjøres med ordinær timelønn når ikke særregelen om passiv nattreise i punkt 20.3 gjelder. Varseltidspunktet brukes bare for den ordinære reisetiden som faktisk ligger utenfor ordinær arbeidstid."
+                },
             )
         }
         if (ordinaryTravelRelevantForNotice.any { it.travelNoticeStatus == TravelNoticeStatus.NOT_CLARIFIED }) {
@@ -1433,6 +1905,13 @@ object TripPlanEngine {
         return (primary + uncoveredTravel).sortedBy { it.start }
     }
 
+    private fun ordinaryTravelParts(block: WorkBlock, rateSet: TariffRateSet): List<WorkBlock> = when (block.kind) {
+        TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_SLEEP_ALLOWED -> travelNonNightBlocks(block, rateSet)
+        TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY_NO_SLEEP -> listOf(block)
+        TimeKind.TRAVEL_WITHOUT_RESPONSIBILITY -> travelNonNightBlocks(block, rateSet)
+        else -> emptyList()
+    }
+
     private fun payableTravelBlocks(
         blocks: List<WorkBlock>,
         fundingMode: FundingMode,
@@ -1540,16 +2019,16 @@ object TripPlanEngine {
     }
 
     private fun travelNightBlocks(block: WorkBlock, rateSet: TariffRateSet): List<WorkBlock> =
-        travelBetween23And07Evidence(block, rateSet).map { WorkBlock(it.start, it.end, block.kind, block.travelNoticeStatus) }
+        travelBetween23And07Evidence(block, rateSet).map { block.copy(start = it.start, end = it.end) }
 
     private fun travelNonNightBlocks(block: WorkBlock, rateSet: TariffRateSet): List<WorkBlock> {
         val night = travelNightBlocks(block, rateSet).map { it.start to it.end }
-        return subtractIntervals(block.start, block.end, night).map { (start, end) -> WorkBlock(start, end, block.kind, block.travelNoticeStatus) }
+        return subtractIntervals(block.start, block.end, night).map { (start, end) -> block.copy(start = start, end = end) }
     }
 
     private fun outsideWorkBlocks(block: WorkBlock, roster: Map<LocalDate, String>): List<WorkBlock> {
         val covered = rosterIntersections(block, roster).map { it.start to it.end }
-        return subtractIntervals(block.start, block.end, covered).map { (start, end) -> WorkBlock(start, end, block.kind, block.travelNoticeStatus) }
+        return subtractIntervals(block.start, block.end, covered).map { (start, end) -> block.copy(start = start, end = end) }
     }
 
     private fun activeEventsPerRestingWatch(
@@ -1642,9 +2121,19 @@ object TripPlanEngine {
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
         rateSet: TariffRateSet,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus?,
     ): List<CalculationEvidence> {
-        val candidateBlocks = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) rosterServiceBlocks(roster, tripStart, tripEnd) else activeBlocks
-        return candidateBlocks.flatMap { block -> eligibleEveningNightSegments(block, block.kind == TimeKind.ACTIVE_NIGHT_WATCH, rateSet) }
+        val candidateBlocks = ordinaryServiceBlocks(
+            fundingMode,
+            activeBlocks,
+            roster,
+            tripStart,
+            tripEnd,
+            holidayWorkPlanStatus,
+        )
+        return candidateBlocks.flatMap { block ->
+            eligibleEveningNightSegments(block, block.kind == TimeKind.ACTIVE_NIGHT_WATCH, rateSet)
+        }
     }
 
     private fun weekendEvidence(
@@ -1654,8 +2143,16 @@ object TripPlanEngine {
         weeklyBasis: WeeklyBasis,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus?,
     ): List<CalculationEvidence> {
-        val candidateBlocks = ordinaryServiceBlocks(fundingMode, activeBlocks, roster, tripStart, tripEnd)
+        val candidateBlocks = ordinaryServiceBlocks(
+            fundingMode,
+            activeBlocks,
+            roster,
+            tripStart,
+            tripEnd,
+            holidayWorkPlanStatus,
+        )
         return candidateBlocks.flatMap { block -> weekendSegmentsExcludingHoliday(block, weeklyBasis) }
     }
 
@@ -1666,8 +2163,15 @@ object TripPlanEngine {
         weeklyBasis: WeeklyBasis,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
-    ): List<CalculationEvidence> = ordinaryServiceBlocks(fundingMode, activeBlocks, roster, tripStart, tripEnd)
-        .flatMap { block -> holidaySupplementSegments(block, weeklyBasis) }
+        holidayWorkPlanStatus: HolidayWorkPlanStatus?,
+    ): List<CalculationEvidence> = ordinaryServiceBlocks(
+        fundingMode,
+        activeBlocks,
+        roster,
+        tripStart,
+        tripEnd,
+        holidayWorkPlanStatus,
+    ).flatMap { block -> holidaySupplementSegments(block, weeklyBasis) }
 
     private fun ordinaryServiceBlocks(
         fundingMode: FundingMode,
@@ -1675,7 +2179,19 @@ object TripPlanEngine {
         roster: Map<LocalDate, String>,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
-    ): List<WorkBlock> = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) rosterServiceBlocks(roster, tripStart, tripEnd) else activeBlocks
+        holidayWorkPlanStatus: HolidayWorkPlanStatus?,
+    ): List<WorkBlock> = when {
+        fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL ->
+            activeBlocks
+        holidayWorkPlanStatus == null ->
+            rosterServiceBlocks(roster, tripStart, tripEnd)
+        holidayWorkPlanStatus == HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED ->
+            activeBlocks.filter {
+                it.holidayWorkPlanRelation == HolidayWorkPlanRelation.WITHIN_HOLIDAY_WORK_PLAN
+            }
+        else ->
+            emptyList()
+    }
 
     private fun rosterServiceBlocks(
         roster: Map<LocalDate, String>,

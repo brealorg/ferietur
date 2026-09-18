@@ -1,5 +1,7 @@
 package app.ferietur.export
 
+import app.ferietur.domain.TripWorkPlanBasis
+import app.ferietur.domain.HolidayWorkPlanStatus
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -233,20 +235,44 @@ object PdfExporter {
 
         w.summaryMetaRow("Arbeidsgiver", employerLabel(s.employerKind), "Betalingsscenario", payingPartyLabel(s.payingParty))
         w.summaryMetaSingle("Regler appen bruker", s.ruleBasis)
+        if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+            w.summaryMetaSingle("Planbasis", workPlanBasisLabelForPdf(s.workPlanBasis))
+            if (s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                w.summaryMetaSingle(
+                    "Arbeidsgivers plan",
+                    holidayWorkPlanStatusLabelForPdf(s.holidayWorkPlanStatus),
+                )
+            }
+        }
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
 
-        if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
-            val coveredSupplement = calculation.alreadyCoveredByNormalRosterAmount
-            val coveredText = buildString {
-                append("I denne beregningen er det lagt til grunn at Oslo kommune utbetaler ordinær lønn og turnustillegg etter grunnturnusen. Den delen av grunnturnusen som overlapper turen utgjør ${minutes(calculation.rosterMinutes)}.")
-                if (coveredSupplement > BigDecimal.ZERO) {
-                    append(" Beregnede turnustillegg fra grunnturnusen: ${money(coveredSupplement)}.")
+        when {
+            s.rosterComparisonMode != RosterComparisonMode.USE_NORMAL_ROSTER ->
+                w.compactNote("Hvordan turen er regnet", separateTripCalculationNote())
+
+            s.workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> {
+                val coveredSupplement = calculation.alreadyCoveredByNormalRosterAmount
+                val coveredText = buildString {
+                    append("I denne beregningen er det lagt til grunn at Oslo kommune utbetaler ordinær lønn og turnustillegg etter grunnturnusen. Den delen av grunnturnusen som overlapper turen utgjør ${minutes(calculation.rosterMinutes)}.")
+                    if (coveredSupplement > BigDecimal.ZERO) {
+                        append(" Beregnede turnustillegg fra grunnturnusen: ${money(coveredSupplement)}.")
+                    }
+                    append(" Dette er ikke med i betalingsgrunnlaget over.")
                 }
-                append(" Dette er ikke med i betalingsgrunnlaget over.")
+                w.compactNote("Grunnturnus som sammenligningsgrunnlag", coveredText)
             }
-            w.compactNote("Grunnturnus som sammenligningsgrunnlag", coveredText)
-        } else {
-            w.compactNote("Hvordan turen er regnet", separateTripCalculationNote())
+
+            s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                w.compactNote(
+                    "Arbeidsgivers plan som sammenligningsgrunnlag",
+                    "Arbeidsgiver har fastsatt en egen arbeidsplan for turen. Registrert arbeid sammenlignes med denne planen når arbeid utover avtalt tid klassifiseres. Grunnturnusen dokumenteres fortsatt som ordinær turnus, men er ikke punkt 20.2-baseline i denne ferdigstillingen.",
+                )
+
+            else ->
+                w.compactNote(
+                    "Planbasis i eldre ferdigstilling",
+                    "Denne ferdigstillingen ble opprettet før Ferietur lagret eksplisitt om grunnturnusen eller en arbeidsgiverfastsatt turplan var sammenligningsgrunnlaget. Appen gjetter derfor ikke planbasis.",
+                )
         }
 
         w.h2("Slik er beløpet satt sammen")
@@ -268,6 +294,20 @@ object PdfExporter {
                 )
 
         w.h2("Status")
+        if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+            w.statusRow(
+                "Planbasis",
+                workPlanBasisLabelForPdf(s.workPlanBasis),
+                if (s.workPlanBasis == TripWorkPlanBasis.NOT_CLARIFIED) PdfTone.WARNING else PdfTone.OK,
+            )
+            if (s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                w.statusRow(
+                    "Arbeidsgivers plan",
+                    holidayWorkPlanStatusLabelForPdf(s.holidayWorkPlanStatus),
+                    if (s.holidayWorkPlanStatus == HolidayWorkPlanStatus.NOT_CLARIFIED) PdfTone.WARNING else PdfTone.OK,
+                )
+            }
+        }
         w.statusRow("Lønnsopplysninger", if (s.payslipChecked) "Kontrollert mot lønnsslipp" else "Må kontrolleres", if (s.payslipChecked) PdfTone.OK else PdfTone.WARNING)
         if (calculation.rosterUncoveredMinutes > 0L) {
             w.statusRow("Turnussammenligning", "${minutes(calculation.rosterUncoveredMinutes)} uten registrert arbeidsperiode · kontrollert", PdfTone.INFO)
@@ -328,7 +368,16 @@ object PdfExporter {
         w.h1("Arbeidsgrunnlaget")
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER && s.roster.isNotEmpty()) {
             w.h2("Grunnturnus")
-            w.p("Dette er turnusen som var lagret da beregningen ble ferdigstilt. Den brukes for å skille arbeid som allerede er dekket fra arbeid som kommer i tillegg.")
+            w.p(
+                when (s.workPlanBasis) {
+                    TripWorkPlanBasis.NORMAL_ROSTER_APPLIES ->
+                        "Dette er turnusen som var lagret da beregningen ble ferdigstilt. Den brukes som avtalt sammenligningsgrunnlag for arbeid på turen."
+                    TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                        "Dette er ordinær grunnturnus som var lagret da beregningen ble ferdigstilt. Arbeidsgivers egen plan for turen er sammenligningsgrunnlaget for arbeid utover avtalt tid."
+                    TripWorkPlanBasis.NOT_CLARIFIED ->
+                        "Dette er grunnturnusen som var lagret i den eldre ferdigstillingen. Eksakt planbasis ble ikke lagret, og Ferietur gjetter derfor ikke hvilken plan som var sammenligningsgrunnlaget."
+                },
+            )
             s.roster.forEach { row ->
                 val time = if (row.start == null || row.end == null) {
                     "Fri"
@@ -337,19 +386,21 @@ object PdfExporter {
                 }
                 w.compactRow(date(row.date), "${row.code} ${row.label}", time)
             }
-            val restingInside = (calculation.restingNightMinutes - calculation.restingNightOutsideRosterMinutes).coerceAtLeast(0)
-            w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
-            w.summaryLine("Registrert aktivt arbeid/reise innen turnusen", minutes(calculation.activeInsideRosterMinutes))
-            if (restingInside > 0) w.summaryLine("Registrert hvilende nattevakt innen turnusen", minutes(restingInside))
-            if (calculation.rosterUncoveredMinutes > 0) {
-                w.summaryLine("Turnustid uten registrert arbeidsperiode på turen", "${minutes(calculation.rosterUncoveredMinutes)} · kontrollert")
-                calculation.rosterUncoveredEvidence.forEach { evidence ->
-                    val period = "${date(evidence.start.toLocalDate())} kl. ${clock(evidence.start)}-${clock(evidence.end)}"
-                    w.compactRow(period, "Ingen registrert arbeidsperiode", "Kontrollert")
+            if (s.workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES) {
+                val restingInside = (calculation.restingNightMinutes - calculation.restingNightOutsideRosterMinutes).coerceAtLeast(0)
+                w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
+                w.summaryLine("Registrert aktivt arbeid/reise innen turnusen", minutes(calculation.activeInsideRosterMinutes))
+                if (restingInside > 0) w.summaryLine("Registrert hvilende nattevakt innen turnusen", minutes(restingInside))
+                if (calculation.rosterUncoveredMinutes > 0) {
+                    w.summaryLine("Turnustid uten registrert arbeidsperiode på turen", "${minutes(calculation.rosterUncoveredMinutes)} · kontrollert")
+                    calculation.rosterUncoveredEvidence.forEach { evidence ->
+                        val period = "${date(evidence.start.toLocalDate())} kl. ${clock(evidence.start)}-${clock(evidence.end)}"
+                        w.compactRow(period, "Ingen registrert arbeidsperiode", "Kontrollert")
+                    }
                 }
-            }
-            if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
-                w.summaryLine("Turnustillegg fra grunnturnusen - ikke med i betalingsgrunnlaget", money(calculation.alreadyCoveredByNormalRosterAmount))
+                if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
+                    w.summaryLine("Turnustillegg fra grunnturnusen - ikke med i betalingsgrunnlaget", money(calculation.alreadyCoveredByNormalRosterAmount))
+                }
             }
             w.space(5)
         } else {
@@ -357,8 +408,25 @@ object PdfExporter {
             w.p("Grunnturnusen er ikke brukt som sammenligningsgrunnlag i denne beregningen.")
         }
 
-        w.h2("Arbeidsplan på turen")
-        w.p("Dette er den registrerte arbeidsplanen som beregningen bygger på.")
+        if (
+            s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN &&
+            s.employerWorkPlanBlocks.isNotEmpty()
+        ) {
+            w.h2("Arbeidsgivers arbeidsplan")
+            w.p("Dette er planen arbeidsgiver hadde fastsatt for turen da beregningen ble ferdigstilt.")
+            s.employerWorkPlanBlocks.groupBy { it.start.toLocalDate() }.toSortedMap().forEach { (day, blocks) ->
+                w.keepTogether(24f + blocks.size * 20f)
+                w.dayHeader(date(day))
+                blocks.sortedBy { it.start }.forEach { block ->
+                    val period = "${clock(block.start)}-${clock(block.end)}${if (block.end.toLocalDate() != block.start.toLocalDate()) " neste dag" else ""}"
+                    w.compactRow(period, workBlockKind(block), "")
+                }
+            }
+            w.space(5)
+        }
+
+        w.h2("Arbeid på turen")
+        w.p("Dette er det registrerte arbeidet som beregningen bygger på.")
         s.workBlocks.groupBy { it.start.toLocalDate() }.toSortedMap().forEach { (day, blocks) ->
             w.keepTogether(24f + blocks.size * 20f)
             w.dayHeader(date(day))
@@ -379,11 +447,24 @@ object PdfExporter {
             .forEach { entry -> writeDetailedLine(w, s, entry, rateSet, alreadyCovered = false) }
 
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
-            w.h2("Grunnturnus - forutsetning i beregningen")
-            w.p("Grunnturnusen brukes her som appens sammenligningsgrunnlag for hva som er forutsatt dekket gjennom ordinær lønn og turnustillegg. Dette er en modellforutsetning, ikke en gjengivelse av ordlyden i Dok. 25 punkt 20.2. Punkt 20.2 omtaler egen arbeidsplan før reisen, gjennomsnittsberegning og kompensasjon for arbeidstid ut over ordinær arbeidstid etter kapittel 8. Hvilken arbeidstidsordning som faktisk gjelder for ferieoppholdet må avklares med arbeidsgiver. Turnusen vises for kontroll og legges ikke til betalingsgrunnlaget.")
-            w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
-            if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
-                w.summaryLine("Turnustillegg beregnet fra grunnturnusen", money(calculation.alreadyCoveredByNormalRosterAmount))
+            when (s.workPlanBasis) {
+                TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> {
+                    w.h2("Grunnturnus - forutsetning i beregningen")
+                    w.p("Grunnturnusen brukes her som appens sammenligningsgrunnlag for hva som er forutsatt dekket gjennom ordinær lønn og turnustillegg. Dette er en modellforutsetning, ikke en gjengivelse av ordlyden i Dok. 25 punkt 20.2. Punkt 20.2 omtaler egen arbeidsplan før reisen, gjennomsnittsberegning og kompensasjon for arbeidstid ut over ordinær arbeidstid etter kapittel 8.")
+                    w.summaryLine("Grunnturnustid som overlapper turen", minutes(calculation.rosterMinutes))
+                    if (calculation.alreadyCoveredByNormalRosterAmount > BigDecimal.ZERO) {
+                        w.summaryLine("Turnustillegg beregnet fra grunnturnusen", money(calculation.alreadyCoveredByNormalRosterAmount))
+                    }
+                }
+                TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN -> {
+                    w.h2("Arbeidsgivers plan - forutsetning i beregningen")
+                    w.p("Arbeidsgiver har fastsatt en egen arbeidsplan for turen. Ferietur bruker den frosne planen som sammenligningsgrunnlag for arbeid utover avtalt tid. Grunnturnusen dokumenteres separat som ordinær turnus.")
+                    w.summaryLine("Planstatus", holidayWorkPlanStatusLabelForPdf(s.holidayWorkPlanStatus))
+                }
+                TripWorkPlanBasis.NOT_CLARIFIED -> {
+                    w.h2("Planbasis - eldre ferdigstilling")
+                    w.p("Denne ferdigstillingen inneholder ikke eksplisitt planbasis. Ferietur gjetter derfor ikke om grunnturnusen eller en egen arbeidsgiverplan var sammenligningsgrunnlaget.")
+                }
             }
         }
 
@@ -671,6 +752,15 @@ object PdfExporter {
         w.summaryLine("Betalingsscenario", payingPartyLabel(s.payingParty))
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
         w.summaryLine("Regler appen bruker", s.ruleBasis)
+        if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+            w.summaryLine("Planbasis", workPlanBasisLabelForPdf(s.workPlanBasis))
+            if (s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                w.summaryLine(
+                    "Arbeidsgivers planstatus",
+                    holidayWorkPlanStatusLabelForPdf(s.holidayWorkPlanStatus),
+                )
+            }
+        }
 
         if (s.tariffContexts.size == 1) {
             val context = s.tariffContexts.single()
@@ -721,6 +811,18 @@ object PdfExporter {
             w.footerMeta("Tariffkontekster: ${s.tariffContexts.size} · se periodene over for sats- og lønnstabell-ID-er")
         }
         w.finalFooterMeta("Opprettet: ${dateTime(s.createdAt)} · beregning-ID: ${s.id}")
+    }
+
+    internal fun workPlanBasisLabelForPdf(value: TripWorkPlanBasis): String = when (value) {
+        TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> "Vanlig grunnturnus gjelder"
+        TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN -> "Arbeidsgiver har fastsatt egen plan"
+        TripWorkPlanBasis.NOT_CLARIFIED -> "Ikke lagret i eldre ferdigstilling"
+    }
+
+    internal fun holidayWorkPlanStatusLabelForPdf(value: HolidayWorkPlanStatus): String = when (value) {
+        HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED -> "Godkjent · minst 14 dagers varsel"
+        HolidayWorkPlanStatus.NOT_APPROVED_OR_LATE -> "Ikke godkjent / kortere varsel"
+        HolidayWorkPlanStatus.NOT_CLARIFIED -> "Ikke avklart"
     }
 
     private fun employerLabel(value: EmployerKind): String = when (value) {
@@ -782,12 +884,25 @@ object PdfExporter {
         fallbackRateSet: TariffRateSet,
     ): String {
         val resolved = snapshot.presentation.rateSetForLine(entry)
-        return when {
+        val base = when {
             resolved != null -> plainLineExplanation(entry.line, resolved)
             snapshot.hasMultipleTariffContexts && entry.line.explanation.isNotBlank() -> entry.line.explanation
             else -> plainLineExplanation(entry.line, fallbackRateSet)
         }
-    }
+            return if (
+            snapshot.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER &&
+            snapshot.workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES &&
+            entry.line.id == "active" &&
+            entry.line.title.contains("utenfor grunnturnusen")
+        ) {
+            base.replace(
+                "Hvilken arbeidsplan og eventuell gjennomsnittsberegning som gjelder for ferieoppholdet må avklares med arbeidsgiver.",
+                "I denne ferdigstillingen er vanlig grunnturnus registrert som gjeldende planbasis. Eventuell gjennomsnittsberegning eller annen arbeidstidsordning må vurderes særskilt med arbeidsgiver.",
+            )
+        } else {
+            base
+        }
+}
 
     private fun presentationRuleRateSet(snapshot: FinalizedTripSnapshot, ruleId: String): TariffRateSet? {
         if (!snapshot.hasMultipleTariffContexts) return FerieturTariffRates.forId(snapshot.tariffRateSetId)

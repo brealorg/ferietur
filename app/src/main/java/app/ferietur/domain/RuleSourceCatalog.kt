@@ -17,6 +17,12 @@ data class RuleSourceBinding(
 object FerieturRuleSources {
     val bindings = listOf(
         tariff("D25_20_2", "20.2"),
+        // Point 20.2 remains the canonical monetary source. EQS 53398 is the
+        // operational applicability source documented on the domain rule/B1 contract.
+        tariff("D25_20_2_WORK_PLAN_SCOPE", "20.2"),
+        // Point 20.3 remains the canonical tariff source. EQS 53398 supplies the
+        // operational on-duty/off-duty applicability distinction.
+        tariff("D25_20_3_TRAVEL_DUTY_STATUS", "20.3"),
         tariff("D25_20_3", "20.3"),
         tariff("D25_18_4", "18.4", "20.3"),
         tariff("D25_18_4_SHORT_NOTICE", "18.4", "13.2", "13.3", "13.7.1"),

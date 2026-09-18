@@ -22,7 +22,14 @@ class TariffPriorityPolicyTest {
         val unresolved = FerieturRules.rules.filter { it.status == RuleStatus.UNRESOLVED }.map { it.id }.toSet()
 
         assertEquals(
-            setOf("D25_18_4_NOTICE", "D25_18_4_X13_7_3", "D25_20_3_SLEEP_PERMISSION", "D25_20_6_EXACT_THRESHOLD"),
+            setOf(
+                "D25_18_4_NOTICE",
+                "D25_18_4_X13_7_3",
+                "D25_20_2_WORK_PLAN_SCOPE",
+                "D25_20_3_TRAVEL_DUTY_STATUS",
+                "D25_20_3_SLEEP_PERMISSION",
+                "D25_20_6_EXACT_THRESHOLD",
+            ),
             unresolved,
         )
         assertFalse("D25_20_2_X12_13" in unresolved)

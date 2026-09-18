@@ -20,6 +20,7 @@ enum class TariffCalculationLineScope {
 object TariffCalculationLineScopes {
     private val scopes = mapOf(
         "active" to TariffCalculationLineScope.SEGMENT_LOCAL,
+        "holiday-work-plan-scope-open" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "resting-night" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "resting-evening-night" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "resting-weekend" to TariffCalculationLineScope.SEGMENT_LOCAL,
@@ -28,6 +29,7 @@ object TariffCalculationLineScopes {
         "weekend" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "holiday" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "travel-without-responsibility" to TariffCalculationLineScope.SEGMENT_LOCAL,
+        "travel-duty-status-open" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "travel-passive-night" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "travel-passive-evening-night" to TariffCalculationLineScope.SEGMENT_LOCAL,
         "travel-passive-weekend" to TariffCalculationLineScope.SEGMENT_LOCAL,
@@ -127,7 +129,7 @@ sealed interface TariffSourceBlockReconstructionResult {
 /**
  * Reassembles the original projected [WorkBlock]s from A4A2 tariff-slice
  * fragments. The reconstruction is provenance-only: it never invents time,
- * kind, or travel-notice state.
+ * kind, travel-notice state, holiday-plan relation, or travel-duty state.
  */
 object TariffSourceBlockReconstructor {
     fun reconstruct(plan: SegmentedTariffCalculationPlan): TariffSourceBlockReconstructionResult {
@@ -139,10 +141,17 @@ object TariffSourceBlockReconstructor {
         fragments.toSortedMap().forEach { (sourceIndex, sourceFragments) ->
             val ordered = sourceFragments.sortedBy { it.block.start }
             val first = ordered.first()
-            if (ordered.any { it.block.kind != first.block.kind || it.block.travelNoticeStatus != first.block.travelNoticeStatus }) {
+            if (
+                ordered.any {
+                    it.block.kind != first.block.kind ||
+                        it.block.travelNoticeStatus != first.block.travelNoticeStatus ||
+                        it.block.holidayWorkPlanRelation != first.block.holidayWorkPlanRelation ||
+                        it.block.travelDutyStatus != first.block.travelDutyStatus
+                }
+            ) {
                 return TariffSourceBlockReconstructionResult.Failure(
                     sourceIndex,
-                    "Kildefragmentene for arbeidsintervall #$sourceIndex har ulik tidsart eller reisevarselstatus.",
+                    "Kildefragmentene for arbeidsintervall #$sourceIndex har ulik tidsart eller klassifiseringsstatus.",
                 )
             }
             ordered.zipWithNext().forEach { (previous, next) ->
@@ -161,6 +170,8 @@ object TariffSourceBlockReconstructor {
                     end = ordered.maxOf { it.block.end },
                     kind = first.block.kind,
                     travelNoticeStatus = first.block.travelNoticeStatus,
+                    holidayWorkPlanRelation = first.block.holidayWorkPlanRelation,
+                    travelDutyStatus = first.block.travelDutyStatus,
                 ),
                 sliceIndexes = ordered.map { it.sliceIndex }.toSortedSet(),
             )

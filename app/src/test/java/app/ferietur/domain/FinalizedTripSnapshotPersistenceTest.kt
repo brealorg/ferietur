@@ -30,7 +30,7 @@ class FinalizedTripSnapshotPersistenceTest {
     }
 
     @Test
-    fun finalizedSnapshotVersionFourRoundTripsMultipleTariffContexts() {
+    fun finalizedSnapshotVersionFiveRoundTripsMultipleTariffContextsAndWorkPlanStatus() {
         val original = snapshot(
             id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             createdAt = LocalDateTime.of(2026, 8, 25, 12, 0, 0),
@@ -48,14 +48,19 @@ class FinalizedTripSnapshotPersistenceTest {
             annualSalary = BigDecimal("620000"),
             hourlyRate = BigDecimal("349.30"),
         )
-        val snapshot = original.copy(tariffContexts = listOf(first, second))
+        val snapshot = original.copy(
+            tariffContexts = listOf(first, second),
+            holidayWorkPlanStatus = HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED,
+        )
 
         val encoded = FinalizedTripSnapshotCodec.encode(snapshot)
         val version = ByteBuffer.wrap(Base64.getDecoder().decode(encoded)).int
         val decoded = FinalizedTripSnapshotCodec.decode(encoded)
 
-        assertEquals(4, version)
+        assertEquals(7, version)
         assertEquals(snapshot, decoded)
+        assertEquals(snapshot.workPlanBasis, decoded.workPlanBasis)
+        assertEquals(snapshot.employerWorkPlanBlocks, decoded.employerWorkPlanBlocks)
         assertTrue(decoded.hasMultipleTariffContexts)
         assertEquals(listOf("oslo-salary-2026-05-01", "future-salary-table"), decoded.tariffContexts.map { it.salaryTableId })
     }
@@ -94,7 +99,7 @@ class FinalizedTripSnapshotPersistenceTest {
     }
 
     @Test
-    fun savedTripSchemaSixPersistsCurrentSnapshotHistoryAndMigrationProvenance() {
+    fun savedTripCurrentSchemaPersistsSnapshotHistoryAndMigrationProvenance() {
         val current = snapshot(
             id = "22222222-2222-4222-8222-222222222222",
             createdAt = LocalDateTime.of(2026, 8, 25, 11, 16, 0),
@@ -107,7 +112,11 @@ class FinalizedTripSnapshotPersistenceTest {
             screen = "SUMMARY",
             finalizedSnapshot = current,
             finalizationHistory = listOf(historical),
-            migrationHistory = setOf(SavedTripDraftMigrator.MIGRATION_V6_SCHEMA),
+            migrationHistory = setOf(
+                SavedTripDraftMigrator.MIGRATION_V6_SCHEMA,
+                SavedTripDraftMigrator.MIGRATION_V7_WORK_PLAN_STATUS,
+            ),
+            holidayWorkPlanStatus = HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED,
         )
 
         val writer = StringWriter()
@@ -115,11 +124,48 @@ class FinalizedTripSnapshotPersistenceTest {
         val serialized = writer.toString()
         val decoded = SavedTripDraftCodec.readDecoded(StringReader(serialized))
 
-        assertTrue(serialized.contains("schemaVersion=6"))
-        assertEquals(6, decoded.sourceSchemaVersion)
+        assertTrue(serialized.contains("schemaVersion=10"))
+        assertEquals(10, decoded.sourceSchemaVersion)
         assertEquals(current, decoded.draft.finalizedSnapshot)
         assertEquals(listOf(historical), decoded.draft.finalizationHistory)
         assertEquals(draft.migrationHistory, decoded.draft.migrationHistory)
+        assertEquals(
+            HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED,
+            decoded.draft.holidayWorkPlanStatus,
+        )
+    }
+
+    @Test
+    fun v6DraftMigrationPreservesDurableFinalizedSnapshots() {
+        val current = snapshot(
+            id = "55555555-5555-4555-8555-555555555555",
+            createdAt = LocalDateTime.of(2026, 8, 25, 11, 18, 0),
+        )
+        val legacyV6 = draft().copy(
+            screen = "SUMMARY",
+            finalizedSnapshot = current,
+            finalizationHistory = listOf(current),
+            migrationHistory = setOf(SavedTripDraftMigrator.MIGRATION_V6_SCHEMA),
+        )
+
+        val migrated = SavedTripDraftMigrator.migrate(
+            sourceSchemaVersion = 6,
+            draft = legacyV6,
+        )
+
+        assertEquals("SUMMARY", migrated.screen)
+        assertEquals(current, migrated.finalizedSnapshot)
+        assertEquals(listOf(current), migrated.finalizationHistory)
+        assertEquals(HolidayWorkPlanStatus.NOT_CLARIFIED, migrated.holidayWorkPlanStatus)
+        assertTrue(
+            SavedTripDraftMigrator.MIGRATION_V7_WORK_PLAN_STATUS in migrated.migrationHistory,
+        )
+        assertTrue(
+            SavedTripDraftMigrator.MIGRATION_V8_PERIOD_RELATION in migrated.migrationHistory,
+        )
+        assertTrue(
+            SavedTripDraftMigrator.MIGRATION_V6_REFINALIZE_LEGACY_SUMMARY !in migrated.migrationHistory,
+        )
     }
 
     @Test
@@ -140,7 +186,7 @@ class FinalizedTripSnapshotPersistenceTest {
         val snapshot = snapshot(
             appVersionName = "1.0.0-rc1",
             appVersionCode = 100,
-            rulesetVersion = "2026.3",
+            rulesetVersion = FERIETUR_RULESET_VERSION,
             salaryTableId = "oslo-salary-2026-05-01",
             salaryEffective = LocalDate.of(2026, 5, 1),
             salarySource = "Oslo kommune lønnstabell fra 01.05.2026",
@@ -148,7 +194,7 @@ class FinalizedTripSnapshotPersistenceTest {
 
         assertEquals("1.0.0-rc1", snapshot.appVersionName)
         assertEquals(100, snapshot.appVersionCode)
-        assertEquals("2026.3", snapshot.rulesetVersion)
+        assertEquals(FERIETUR_RULESET_VERSION, snapshot.rulesetVersion)
         assertEquals(FerieturTariffs.DOK25_2026_2028_ID, snapshot.tariffPackageId)
         assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, snapshot.tariffRateSetId)
         assertEquals("oslo-salary-2026-05-01", snapshot.salaryTableId)
@@ -163,13 +209,14 @@ class FinalizedTripSnapshotPersistenceTest {
     }
 
     @Test
-    fun legacyVersionOneSnapshotInfersCurrentTariffProvenance() {
+    fun legacyVersionOneSnapshotRetainsHistoricalRulesetAndInfersDok25Provenance() {
         val encoded =
             "AAAAAQAAACQ0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQAAAATMjAyNi0wOC0yNVQxMToxNTozMAAAAAUwLjUuNQAAADQAAAAGMjAyNi4zAAAAFm9zbG8tc2FsYXJ5LTIwMjYtMDUtMDEAAAAKMjAyNi0wNS0wMQAAAChMw7hubnN0YWJlbGwgT3NsbyBrb21tdW5lIGZyYSAwMS4wNS4yMDI2AAAACUxlZ2FjeSB2MQAAABAyMDI2LTA4LTI1VDA3OjAwAAAAEDIwMjYtMDgtMjZUMjA6MDAAAAAMT1NMT19LT01NVU5FAAAAC1VOU1BFQ0lGSUVEAAAAGERPX05PVF9VU0VfTk9STUFMX1JPU1RFUgAAACAAAAAGNjE0NjAwAAAACkhPVVJTXzM1XzUAAAAIU1RBTkRBUkQBAAAAAAAAAAAAAAAABjMzMi45NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAEMC4wMAAAAAQwLjAwAAAABDAuMDAAAAAEMC4wMAAAAAAAAAAEMC4wMAAAAAQwLjAwAQAAAAAAAAAAAAAAAA=="
 
         val decoded = FinalizedTripSnapshotCodec.decode(encoded)
 
         assertEquals("Legacy v1", decoded.title)
+        assertEquals("2026.3", decoded.rulesetVersion)
         assertEquals("oslo-salary-2026-05-01", decoded.salaryTableId)
         assertEquals(FerieturTariffs.DOK25_2026_2028_ID, decoded.tariffPackageId)
         assertEquals(FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID, decoded.tariffRateSetId)

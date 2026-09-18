@@ -151,7 +151,7 @@ class TripDraftStoreTest {
                     app.ferietur.domain.SavedTripDraftMigrator.MIGRATION_V6_SCHEMA,
                 ),
             )
-            assertTrue(file.readText().contains("schemaVersion=6"))
+            assertTrue(file.readText().contains("schemaVersion=10"))
 
             val secondRead = store.loadLibrary()
             assertEquals(migrated.drafts, secondRead.drafts)

@@ -14,9 +14,18 @@ object FinalizedTripSnapshotCodec {
     private const val LEGACY_FORMAT_VERSION = 1
     private const val SINGLE_CONTEXT_FORMAT_VERSION = 2
     private const val MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION = 3
-    private const val FORMAT_VERSION = 4
+    private const val CALCULATION_PAYLOAD_FORMAT_VERSION = 4
+    private const val HOLIDAY_WORK_PLAN_STATUS_FORMAT_VERSION = 5
+    private const val PERIOD_RELATION_FORMAT_VERSION = 6
+    private const val WORK_PLAN_BASIS_FORMAT_VERSION = 7
+    private const val FORMAT_VERSION = WORK_PLAN_BASIS_FORMAT_VERSION
     private const val LEGACY_UNKNOWN_TARIFF_PACKAGE_ID = "legacy-v1-unknown-tariff-package"
     private const val LEGACY_UNKNOWN_RATE_SET_ID = "legacy-v1-unknown-rate-set"
+    // Snapshot format v1 did not persist tariff package/rate-set identity.
+    // Ruleset 2026.3 + the 2026 Oslo salary table is the historical combination
+    // that predates explicit tariff provenance and can be mapped deterministically.
+    // Keep this frozen: it must not move when the current ruleset advances.
+    private const val LEGACY_DOK25_2026_2028_RULESET_VERSION = "2026.3"
 
     fun encode(snapshot: FinalizedTripSnapshot): String {
         val bytes = ByteArrayOutputStream()
@@ -35,6 +44,9 @@ object FinalizedTripSnapshotCodec {
                 version == LEGACY_FORMAT_VERSION ||
                     version == SINGLE_CONTEXT_FORMAT_VERSION ||
                     version == MULTI_CONTEXT_PROVENANCE_FORMAT_VERSION ||
+                    version == CALCULATION_PAYLOAD_FORMAT_VERSION ||
+                    version == HOLIDAY_WORK_PLAN_STATUS_FORMAT_VERSION ||
+                    version == PERIOD_RELATION_FORMAT_VERSION ||
                     version == FORMAT_VERSION,
             ) {
                 "Unsupported finalized snapshot format: $version"
@@ -73,6 +85,9 @@ object FinalizedTripSnapshotCodec {
         writeSettlement(snapshot.settlement)
         writeList(snapshot.findings) { writeFinding(it) }
         writeList(snapshot.unresolvedRules) { writeRule(it) }
+        writeString(snapshot.holidayWorkPlanStatus.name)
+        writeString(snapshot.workPlanBasis.name)
+        writeList(snapshot.employerWorkPlanBlocks) { writeWorkBlock(it) }
     }
 
     private fun DataInputStream.readSnapshot(formatVersion: Int): FinalizedTripSnapshot {
@@ -104,8 +119,8 @@ object FinalizedTripSnapshotCodec {
         val payslipChecked = readBoolean()
         val rosterGapConfirmed = readBoolean()
         val roster = readList { readRosterRow() }
-        val workBlocks = readList { readWorkBlock() }
-        val calculationPayload = if (formatVersion >= FORMAT_VERSION) {
+        val workBlocks = readList { readWorkBlock(formatVersion) }
+        val calculationPayload = if (formatVersion >= CALCULATION_PAYLOAD_FORMAT_VERSION) {
             readCalculationPayload()
         } else {
             FinalizedCalculationPayload.Preliminary(readCalculation())
@@ -113,6 +128,21 @@ object FinalizedTripSnapshotCodec {
         val settlement = readSettlement()
         val findings = readList { readFinding() }
         val unresolvedRules = readList { readRule() }
+        val holidayWorkPlanStatus = if (formatVersion >= HOLIDAY_WORK_PLAN_STATUS_FORMAT_VERSION) {
+            enumValueOf<HolidayWorkPlanStatus>(readString())
+        } else {
+            HolidayWorkPlanStatus.NOT_CLARIFIED
+        }
+        val workPlanBasis = if (formatVersion >= WORK_PLAN_BASIS_FORMAT_VERSION) {
+            enumValueOf<TripWorkPlanBasis>(readString())
+        } else {
+            TripWorkPlanBasis.NOT_CLARIFIED
+        }
+        val employerWorkPlanBlocks = if (formatVersion >= WORK_PLAN_BASIS_FORMAT_VERSION) {
+            readList { readWorkBlock(formatVersion) }
+        } else {
+            emptyList()
+        }
 
         val tariffContexts = storedTariffContexts ?: listOf(
             legacySingleContext(
@@ -161,6 +191,9 @@ object FinalizedTripSnapshotCodec {
             settlement = settlement,
             findings = findings,
             unresolvedRules = unresolvedRules,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
+            workPlanBasis = workPlanBasis,
+            employerWorkPlanBlocks = employerWorkPlanBlocks,
         )
     }
 
@@ -195,7 +228,7 @@ object FinalizedTripSnapshotCodec {
 
     private fun legacyTariffProvenance(rulesetVersion: String, salaryTableId: String): Pair<String, String> =
         if (
-            rulesetVersion == FerieturTariffs.DOK25_2026_2028_RULESET_VERSION &&
+            rulesetVersion == LEGACY_DOK25_2026_2028_RULESET_VERSION &&
             salaryTableId == OsloSalaryTable2026.tableId
         ) {
             FerieturTariffs.DOK25_2026_2028_ID to FerieturTariffRates.DOK25_2026_2028_RATE_SET_ID
@@ -252,15 +285,36 @@ object FinalizedTripSnapshotCodec {
         writeDateTime(block.end)
         writeString(block.kind.name)
         writeString(block.travelNoticeStatus.name)
+        writeString(block.holidayWorkPlanRelation.name)
+        writeString(block.travelDutyStatus.name)
     }
 
-    private fun DataInputStream.readWorkBlock(): WorkBlock =
-        WorkBlock(
-            start = readDateTime(),
-            end = readDateTime(),
-            kind = enumValueOf(readString()),
-            travelNoticeStatus = enumValueOf(readString()),
+    private fun DataInputStream.readWorkBlock(formatVersion: Int): WorkBlock {
+        val start = readDateTime()
+        val end = readDateTime()
+        val kind: TimeKind = enumValueOf(readString())
+        val travelNoticeStatus: TravelNoticeStatus = enumValueOf(readString())
+        val holidayWorkPlanRelation =
+            if (formatVersion >= PERIOD_RELATION_FORMAT_VERSION) {
+                enumValueOf<HolidayWorkPlanRelation>(readString())
+            } else {
+                HolidayWorkPlanRelation.NOT_CLARIFIED
+            }
+        val travelDutyStatus =
+            if (formatVersion >= PERIOD_RELATION_FORMAT_VERSION) {
+                enumValueOf<TravelDutyStatus>(readString())
+            } else {
+                TravelDutyStatus.NOT_CLARIFIED
+            }
+        return WorkBlock(
+            start = start,
+            end = end,
+            kind = kind,
+            travelNoticeStatus = travelNoticeStatus,
+            holidayWorkPlanRelation = holidayWorkPlanRelation,
+            travelDutyStatus = travelDutyStatus,
         )
+    }
 
     private fun DataOutputStream.writeSettlement(value: SettlementSnapshot) {
         writeDecimal(value.calculatedAmount)

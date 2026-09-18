@@ -81,7 +81,7 @@ class FinalRegressionPolicyTest {
         assertTrue(snapshot.isConfirmedDocumentBasis)
         assertTrue(snapshot.unresolvedRules.isEmpty())
         assertEquals(BigDecimal("43267.74"), snapshot.calculation.paymentBasisAmount.setScale(2))
-        assertEquals("2026.3", FERIETUR_RULESET_VERSION)
+        assertEquals("2026.4", FERIETUR_RULESET_VERSION)
     }
 
     @Test

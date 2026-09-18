@@ -42,7 +42,7 @@ class FinalizedCalculationPayloadTest {
     }
 
     @Test
-    fun snapshotVersionFourRoundTripsSegmentedPayloadWithoutInventingPreliminaryCalculation() {
+    fun currentSnapshotRoundTripsSegmentedPayloadWithoutInventingPreliminaryCalculation() {
         val runtime = segmentedRuntime()
         val payload = FinalizedCalculationPayload.fromRuntime(runtime)
         val contexts = FinalizedTariffContextSnapshots.fromRuntime(runtime)
@@ -87,7 +87,7 @@ class FinalizedCalculationPayloadTest {
         val version = ByteBuffer.wrap(Base64.getDecoder().decode(encoded)).int
         val decoded = FinalizedTripSnapshotCodec.decode(encoded)
 
-        assertEquals(4, version)
+        assertEquals(7, version)
         assertEquals(snapshot, decoded)
         assertTrue(decoded.hasSegmentedCalculation)
         assertTrue(decoded.hasMultipleTariffContexts)

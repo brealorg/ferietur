@@ -134,6 +134,7 @@ object FerieturTariffRuntimeCalculator {
         weekendProfile: WeekendProfile,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): TariffRuntimeCalculationResult {
         if (!tripEnd.isAfter(tripStart)) {
             return failure(
@@ -213,6 +214,7 @@ object FerieturTariffRuntimeCalculator {
             dates = dates,
             roster = roster,
             weekendProfile = weekendProfile,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
     }
 
@@ -233,6 +235,7 @@ object FerieturTariffRuntimeCalculator {
         weekendProfile: WeekendProfile,
         tripStart: LocalDateTime,
         tripEnd: LocalDateTime,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): TariffRuntimeCalculationResult {
         if (!tripEnd.isAfter(tripStart)) {
             return failure(
@@ -318,6 +321,7 @@ object FerieturTariffRuntimeCalculator {
             dates = dates,
             roster = roster,
             weekendProfile = weekendProfile,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
     }
 
@@ -332,6 +336,7 @@ object FerieturTariffRuntimeCalculator {
         dates: List<LocalDate>,
         roster: Map<LocalDate, String>,
         weekendProfile: WeekendProfile,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): TariffRuntimeCalculationResult {
         if (plan.slices.size == 1) {
             val slice = plan.slices.single()
@@ -346,6 +351,7 @@ object FerieturTariffRuntimeCalculator {
                 tripStart = plan.tripStart,
                 tripEnd = plan.tripEnd,
                 rateSet = slice.segment.rateSet,
+                holidayWorkPlanStatus = holidayWorkPlanStatus,
             )
             return TariffRuntimeCalculationResult.Success(
                 TariffRuntimeCalculation.SingleContext(
@@ -361,6 +367,7 @@ object FerieturTariffRuntimeCalculator {
             fundingMode = fundingMode,
             roster = roster,
             weekendProfile = weekendProfile,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
         if (monetary is TariffSegmentedMonetaryResult.Failure) {
             return TariffRuntimeCalculationResult.Failure(

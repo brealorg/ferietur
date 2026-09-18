@@ -28,7 +28,7 @@ data class TariffPackage(
 
 object FerieturTariffs {
     const val DOK25_2026_2028_ID = "oslo-dok25-2026-2028"
-    const val DOK25_2026_2028_RULESET_VERSION = "2026.3"
+    const val DOK25_2026_2028_RULESET_VERSION = "2026.4"
 
     val dok25_2026_2028 = TariffPackage(
         id = DOK25_2026_2028_ID,

@@ -25,6 +25,28 @@ class RuleSourceCatalogTest {
     }
 
     @Test
+    fun holidayWorkPlanScopeRuleKeepsPoint20_2AsCanonicalTariffBinding() {
+        val binding = FerieturRuleSources.forRule("D25_20_2_WORK_PLAN_SCOPE")
+        val domainRule = FerieturRules.rules.single { it.id == "D25_20_2_WORK_PLAN_SCOPE" }
+
+        assertEquals(RuleSourceKind.TARIFF, binding.sourceKind)
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, binding.tariffPackageId)
+        assertEquals(listOf("20.2"), binding.sections)
+        assertTrue(domainRule.source.contains("EQS ID 53398"))
+    }
+
+    @Test
+    fun travelDutyStatusRuleKeepsPoint20_3AsCanonicalTariffBinding() {
+        val binding = FerieturRuleSources.forRule("D25_20_3_TRAVEL_DUTY_STATUS")
+        val domainRule = FerieturRules.rules.single { it.id == "D25_20_3_TRAVEL_DUTY_STATUS" }
+
+        assertEquals(RuleSourceKind.TARIFF, binding.sourceKind)
+        assertEquals(FerieturTariffs.DOK25_2026_2028_ID, binding.tariffPackageId)
+        assertEquals(listOf("20.3"), binding.sections)
+        assertTrue(domainRule.source.contains("EQS ID 53398"))
+    }
+
+    @Test
     fun nonTariffRulesStayOutsideTheTariffPackage() {
         val settlement = FerieturRuleSources.forRule("PAYMENT_PROPOSAL")
         val aml = FerieturRuleSources.forRule("AML_CONTROL")

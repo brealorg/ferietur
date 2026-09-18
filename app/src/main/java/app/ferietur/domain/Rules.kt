@@ -17,6 +17,8 @@ data class DomainRule(
 object FerieturRules {
     val rules = listOf(
         DomainRule("D25_20_2", "Arbeid utover den ordinære arbeidstiden på ferieopphold", "Dok. 25 2026–28, punkt 20.2", RuleStatus.IMPLEMENTED),
+        DomainRule("D25_20_2_WORK_PLAN_SCOPE", "Hvilke registrerte perioder som er arbeid utover feriearbeidsplanen", "Dok. 25 2026–28, punkt 20.2 · Oslo kommune EQS ID 53398, rev. 1.2", RuleStatus.UNRESOLVED),
+        DomainRule("D25_20_3_TRAVEL_DUTY_STATUS", "Om reise uten tilsynsansvar skjedde på vakt eller ikke på vakt", "Dok. 25 2026–28, punkt 18.4 og 20.3 · Oslo kommune EQS ID 53398, rev. 1.2", RuleStatus.UNRESOLVED),
         DomainRule("D25_20_3", "Reise med ansvar for beboeren", "Dok. 25 2026–28, punkt 20.3", RuleStatus.IMPLEMENTED),
         DomainRule("D25_18_4", "Reisetid uten tilsynsansvar", "Dok. 25 2026–28, punkt 18.4 og 20.3", RuleStatus.IMPLEMENTED),
         DomainRule("D25_18_4_SHORT_NOTICE", "Kort varsel om tjenestereisen", "Dok. 25 2026–28, punkt 18.4, 13.2, 13.3 og 13.7.1", RuleStatus.IMPLEMENTED),

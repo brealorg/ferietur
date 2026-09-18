@@ -33,6 +33,35 @@ enum class RosterComparisonMode {
     DO_NOT_USE_NORMAL_ROSTER,
 }
 
+/**
+ * Status for the dedicated work plan required before a chapter-20 holiday stay.
+ *
+ * This is deliberately separate from [RosterComparisonMode]. The ordinary roster may be kept as
+ * historical/control data, while the approved holiday work plan determines whether registered
+ * periods are ordinary planned work or require a separate clarification.
+ */
+enum class TripWorkPlanBasis {
+    /** No factual basis selected yet. Never guess from registered hours. */
+    NOT_CLARIFIED,
+
+    /** Employer has not set a separate trip plan; ordinary ground roster remains baseline. */
+    NORMAL_ROSTER_APPLIES,
+
+    /** Employer has set a separate work plan for the trip/stay. */
+    EMPLOYER_SET_TRIP_PLAN,
+}
+
+enum class HolidayWorkPlanStatus {
+    /** No verified plan/notice basis has been recorded yet. */
+    NOT_CLARIFIED,
+
+    /** A dedicated holiday work plan was approved and notified at least 14 days in advance. */
+    APPROVED_AND_TIMELY_NOTIFIED,
+
+    /** The plan was not approved in advance or the 14-day notice condition was not met. */
+    NOT_APPROVED_OR_LATE,
+}
+
 fun RosterComparisonMode.toFundingMode(): FundingMode = when (this) {
     RosterComparisonMode.USE_NORMAL_ROSTER -> FundingMode.TURNUS_PLUS_EXTERNAL
     RosterComparisonMode.DO_NOT_USE_NORMAL_ROSTER -> FundingMode.VACATION_SEPARATE
@@ -52,6 +81,32 @@ fun EmployerKind.ruleBasisLabel(): String = when (this) {
 }
 
 fun EmployerKind.isRuleBasisConfirmed(): Boolean = this == EmployerKind.OSLO_KOMMUNE
+
+/**
+ * Derived relation between actual work and the dedicated holiday-stay work plan.
+ *
+ * UX02 derives this metadata automatically from the two factual datasets. It is retained on
+ * projected/runtime blocks because the tariff engine needs the result, but it is not a fact
+ * the employee should classify manually in the UI.
+ */
+enum class HolidayWorkPlanRelation {
+    NOT_CLARIFIED,
+    WITHIN_HOLIDAY_WORK_PLAN,
+    BEYOND_HOLIDAY_WORK_PLAN,
+}
+
+/**
+ * Whether a travel period occurred while the employee was on duty.
+ *
+ * This is deliberately separate from supervision responsibility: EQS 53398 distinguishes
+ * travel while on duty from travel where the employee is not on duty, even when the employee
+ * is travelling in connection with the same holiday stay.
+ */
+enum class TravelDutyStatus {
+    NOT_CLARIFIED,
+    ON_DUTY,
+    OFF_DUTY,
+}
 
 enum class TravelNoticeStatus {
     /** Reisen var kjent senest dagen i forveien. */
@@ -97,6 +152,8 @@ data class WorkBlock(
     val end: LocalDateTime,
     val kind: TimeKind,
     val travelNoticeStatus: TravelNoticeStatus = TravelNoticeStatus.NOT_CLARIFIED,
+    val holidayWorkPlanRelation: HolidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED,
+    val travelDutyStatus: TravelDutyStatus = TravelDutyStatus.NOT_CLARIFIED,
 )
 
 data class PlannedBlock(
@@ -104,11 +161,20 @@ data class PlannedBlock(
     val start: LocalTime,
     val end: LocalTime,
     val travelNoticeStatus: TravelNoticeStatus = TravelNoticeStatus.NOT_CLARIFIED,
+    val holidayWorkPlanRelation: HolidayWorkPlanRelation = HolidayWorkPlanRelation.NOT_CLARIFIED,
+    val travelDutyStatus: TravelDutyStatus = TravelDutyStatus.NOT_CLARIFIED,
 ) {
     fun toWorkBlock(date: LocalDate): WorkBlock {
         val startDateTime = LocalDateTime.of(date, start)
         val endDate = if (end.isAfter(start)) date else date.plusDays(1)
-        return WorkBlock(startDateTime, LocalDateTime.of(endDate, end), kind, travelNoticeStatus)
+        return WorkBlock(
+            start = startDateTime,
+            end = LocalDateTime.of(endDate, end),
+            kind = kind,
+            travelNoticeStatus = travelNoticeStatus,
+            holidayWorkPlanRelation = holidayWorkPlanRelation,
+            travelDutyStatus = travelDutyStatus,
+        )
     }
 }
 

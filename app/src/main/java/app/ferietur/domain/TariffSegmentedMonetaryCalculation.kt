@@ -43,6 +43,8 @@ data class SegmentedTariffMonetaryCalculation(
 
     val applicableUnresolvedRuleIds: Set<String> get() = lines.mapNotNull { line ->
         when (line.id) {
+            "holiday-work-plan-scope-open" -> "D25_20_2_WORK_PLAN_SCOPE"
+            "travel-duty-status-open" -> "D25_20_3_TRAVEL_DUTY_STATUS"
             "travel-night-sleep-open" -> "D25_20_3_SLEEP_PERMISSION"
             "travel-notice-open" -> "D25_18_4_NOTICE"
             "travel-short-notice-133-open" -> "D25_18_4_X13_7_3"
@@ -102,6 +104,7 @@ object TariffSegmentedMonetaryCoordinator {
         fundingMode: FundingMode,
         roster: Map<java.time.LocalDate, String>,
         weekendProfile: WeekendProfile,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus? = null,
     ): TariffSegmentedMonetaryResult {
         val scopeResult = TariffWholeTripScopeCoordinator.coordinate(plan)
         if (scopeResult is TariffWholeTripScopeResult.Failure) {
@@ -131,6 +134,7 @@ object TariffSegmentedMonetaryCoordinator {
                 fundingMode = fundingMode,
                 roster = roster,
                 weekendProfile = weekendProfile,
+                holidayWorkPlanStatus = holidayWorkPlanStatus,
             )
         }
 
@@ -163,6 +167,7 @@ object TariffSegmentedMonetaryCoordinator {
                 tripStart = slice.windowStart,
                 tripEnd = slice.windowEnd,
                 rateSet = slice.segment.rateSet,
+                holidayWorkPlanStatus = holidayWorkPlanStatus,
             )
             sliceCalculation.lines
                 .filter { TariffCalculationLineScopes.requireForLineId(it.id) == TariffCalculationLineScope.SEGMENT_LOCAL }
@@ -252,6 +257,7 @@ object TariffSegmentedMonetaryCoordinator {
         fundingMode: FundingMode,
         roster: Map<java.time.LocalDate, String>,
         weekendProfile: WeekendProfile,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus?,
     ): TariffSegmentedMonetaryResult.Success {
         val slice = plan.slices.single()
         val calculation = TripPlanEngine.calculatePreliminaryFromProjectedBlocks(
@@ -265,6 +271,7 @@ object TariffSegmentedMonetaryCoordinator {
             tripStart = plan.tripStart,
             tripEnd = plan.tripEnd,
             rateSet = slice.segment.rateSet,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
         return TariffSegmentedMonetaryResult.Success(
             SegmentedTariffMonetaryCalculation(

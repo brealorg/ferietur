@@ -40,6 +40,9 @@ data class SavedTripDraft(
     val finalizedSnapshot: FinalizedTripSnapshot? = null,
     val finalizationHistory: List<FinalizedTripSnapshot> = emptyList(),
     val migrationHistory: Set<String> = emptySet(),
+    val holidayWorkPlanStatus: HolidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED,
+    val workPlanBasis: TripWorkPlanBasis = TripWorkPlanBasis.NOT_CLARIFIED,
+    val holidayPlans: Map<LocalDate, List<PlannedBlock>> = emptyMap(),
 )
 
 data class DecodedSavedTripDraft(
@@ -55,7 +58,7 @@ class UnsupportedSavedTripSchemaException(
 )
 
 object SavedTripDraftCodec {
-    const val SCHEMA_VERSION = 6
+    const val SCHEMA_VERSION = 10
 
     fun write(draft: SavedTripDraft, writer: Writer) {
         val properties = Properties().apply {
@@ -93,6 +96,8 @@ object SavedTripDraftCodec {
                 setProperty("finalized.history.$index", FinalizedTripSnapshotCodec.encode(snapshot))
             }
             setProperty("migrationHistory", draft.migrationHistory.sorted().joinToString(","))
+            setProperty("holidayWorkPlanStatus", draft.holidayWorkPlanStatus.name)
+            setProperty("workPlanBasis", draft.workPlanBasis.name)
 
             draft.roster.toSortedMap().forEach { (date, code) ->
                 setProperty("roster.$date", code)
@@ -101,7 +106,29 @@ object SavedTripDraftCodec {
                 blocks.forEachIndexed { index, block ->
                     setProperty(
                         "plan.$date.$index",
-                        listOf(block.kind.name, block.start.toString(), block.end.toString(), block.travelNoticeStatus.name).joinToString("|"),
+                        listOf(
+                            block.kind.name,
+                            block.start.toString(),
+                            block.end.toString(),
+                            block.travelNoticeStatus.name,
+                            block.holidayWorkPlanRelation.name,
+                            block.travelDutyStatus.name,
+                        ).joinToString("|"),
+                    )
+                }
+            }
+            draft.holidayPlans.toSortedMap().forEach { (date, blocks) ->
+                blocks.forEachIndexed { index, block ->
+                    setProperty(
+                        "holidayPlan.$date.$index",
+                        listOf(
+                            block.kind.name,
+                            block.start.toString(),
+                            block.end.toString(),
+                            block.travelNoticeStatus.name,
+                            block.holidayWorkPlanRelation.name,
+                            block.travelDutyStatus.name,
+                        ).joinToString("|"),
                     )
                 }
             }
@@ -124,12 +151,47 @@ object SavedTripDraftCodec {
 
         val roster = linkedMapOf<LocalDate, String>()
         val plansByDate = linkedMapOf<LocalDate, MutableList<Pair<Int, PlannedBlock>>>()
+        val holidayPlansByDate = linkedMapOf<LocalDate, MutableList<Pair<Int, PlannedBlock>>>()
 
         properties.stringPropertyNames().forEach { key ->
             when {
                 key.startsWith("roster.") -> {
                     val date = LocalDate.parse(key.removePrefix("roster."))
                     roster[date] = properties.requireProperty(key)
+                }
+                key.startsWith("holidayPlan.") -> {
+                    val suffix = key.removePrefix("holidayPlan.")
+                    val lastDot = suffix.lastIndexOf('.')
+                    require(lastDot > 0) { "Malformed saved holiday plan key: $key" }
+                    val date = LocalDate.parse(suffix.substring(0, lastDot))
+                    val index = suffix.substring(lastDot + 1).toInt()
+                    val parts = properties.requireProperty(key).split('|')
+                    require(parts.size in 3..6) { "Malformed saved holiday plan value: $key" }
+                    val kind = TimeKind.valueOf(parts[0])
+                    val notice = if (parts.size >= 4) {
+                        enumValueOrDefault(parts[3], TravelNoticeStatus.NOT_CLARIFIED)
+                    } else {
+                        TravelNoticeStatus.NOT_CLARIFIED
+                    }
+                    val workPlanRelation = if (parts.size >= 5) {
+                        enumValueOrDefault(parts[4], HolidayWorkPlanRelation.NOT_CLARIFIED)
+                    } else {
+                        HolidayWorkPlanRelation.NOT_CLARIFIED
+                    }
+                    val travelDutyStatus = if (parts.size >= 6) {
+                        enumValueOrDefault(parts[5], TravelDutyStatus.NOT_CLARIFIED)
+                    } else {
+                        TravelDutyStatus.NOT_CLARIFIED
+                    }
+                    val block = PlannedBlock(
+                        kind = kind,
+                        start = LocalTime.parse(parts[1]),
+                        end = LocalTime.parse(parts[2]),
+                        travelNoticeStatus = notice,
+                        holidayWorkPlanRelation = workPlanRelation,
+                        travelDutyStatus = travelDutyStatus,
+                    )
+                    holidayPlansByDate.getOrPut(date) { mutableListOf() }.add(index to block)
                 }
                 key.startsWith("plan.") -> {
                     val suffix = key.removePrefix("plan.")
@@ -138,18 +200,30 @@ object SavedTripDraftCodec {
                     val date = LocalDate.parse(suffix.substring(0, lastDot))
                     val index = suffix.substring(lastDot + 1).toInt()
                     val parts = properties.requireProperty(key).split('|')
-                    require(parts.size == 3 || parts.size == 4) { "Malformed saved plan value: $key" }
+                    require(parts.size in 3..6) { "Malformed saved plan value: $key" }
                     val kind = TimeKind.valueOf(parts[0])
                     val notice = if (parts.size >= 4) {
                         enumValueOrDefault(parts[3], TravelNoticeStatus.NOT_CLARIFIED)
                     } else {
                         TravelNoticeStatus.NOT_CLARIFIED
                     }
+                    val workPlanRelation = if (parts.size >= 5) {
+                        enumValueOrDefault(parts[4], HolidayWorkPlanRelation.NOT_CLARIFIED)
+                    } else {
+                        HolidayWorkPlanRelation.NOT_CLARIFIED
+                    }
+                    val travelDutyStatus = if (parts.size >= 6) {
+                        enumValueOrDefault(parts[5], TravelDutyStatus.NOT_CLARIFIED)
+                    } else {
+                        TravelDutyStatus.NOT_CLARIFIED
+                    }
                     val block = PlannedBlock(
                         kind = kind,
                         start = LocalTime.parse(parts[1]),
                         end = LocalTime.parse(parts[2]),
                         travelNoticeStatus = notice,
+                        holidayWorkPlanRelation = workPlanRelation,
+                        travelDutyStatus = travelDutyStatus,
                     )
                     plansByDate.getOrPut(date) { mutableListOf() }.add(index to block)
                 }
@@ -230,6 +304,29 @@ object SavedTripDraftCodec {
                     .toSet()
             } else {
                 emptySet()
+            },
+            holidayWorkPlanStatus = if (version >= 7) {
+                enumValueOrDefault(
+                    properties.getProperty("holidayWorkPlanStatus"),
+                    HolidayWorkPlanStatus.NOT_CLARIFIED,
+                )
+            } else {
+                HolidayWorkPlanStatus.NOT_CLARIFIED
+            },
+            workPlanBasis = if (version >= 10) {
+                enumValueOrDefault(
+                    properties.getProperty("workPlanBasis"),
+                    TripWorkPlanBasis.NOT_CLARIFIED,
+                )
+            } else {
+                TripWorkPlanBasis.NOT_CLARIFIED
+            },
+            holidayPlans = if (version >= 9) {
+                holidayPlansByDate.mapValues { (_, indexed) ->
+                    indexed.sortedBy { it.first }.map { it.second }
+                }
+            } else {
+                emptyMap()
             },
         )
         val migrated = SavedTripDraftMigrator.migrate(

@@ -51,6 +51,7 @@ class SavedTripDraftCodecTest {
             settlementMode = "CUSTOM_AGREEMENT",
             settlementAmountText = "48 000,00",
             settlementReason = "Avtalt beløp\nmed verge",
+            holidayWorkPlanStatus = HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED,
         )
 
         val text = StringWriter().also { SavedTripDraftCodec.write(draft, it) }.toString()
@@ -91,6 +92,9 @@ class SavedTripDraftCodecTest {
         val block = restored.plans.getValue(LocalDate.of(2026, 8, 10)).single()
 
         assertEquals(TravelNoticeStatus.NOT_CLARIFIED, block.travelNoticeStatus)
+        assertEquals(HolidayWorkPlanRelation.NOT_CLARIFIED, block.holidayWorkPlanRelation)
+        assertEquals(TravelDutyStatus.NOT_CLARIFIED, block.travelDutyStatus)
+        assertEquals(HolidayWorkPlanStatus.NOT_CLARIFIED, restored.holidayWorkPlanStatus)
     }
 
     @Test
@@ -135,5 +139,10 @@ class SavedTripDraftCodecTest {
             SavedTripDraftMigrator.MIGRATION_V6_MANUAL_ROSTER in restored.migrationHistory,
         )
         assertEquals(1, restored.plans[LocalDate.of(2026, 8, 11)]?.size)
+        assertEquals(HolidayWorkPlanStatus.NOT_CLARIFIED, restored.holidayWorkPlanStatus)
+        assertEquals(
+            true,
+            SavedTripDraftMigrator.MIGRATION_V7_WORK_PLAN_STATUS in restored.migrationHistory,
+        )
     }
 }

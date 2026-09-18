@@ -7,6 +7,8 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -169,6 +171,11 @@ import app.ferietur.domain.FinalizedTripSnapshotBuilder
 import app.ferietur.domain.SettlementSnapshot
 import app.ferietur.domain.FindingSeverity
 import app.ferietur.domain.FundingMode
+import app.ferietur.domain.HolidayWorkPlanPolicy
+import app.ferietur.domain.HolidayWorkPlanRelation
+import app.ferietur.domain.HolidayWorkPlanStatus
+import app.ferietur.domain.TravelDutyStatus
+import app.ferietur.domain.TripWorkPlanBasis
 import app.ferietur.domain.NewTripDefaultsFactory
 import app.ferietur.domain.OsloSalaryTable2026
 import app.ferietur.domain.OsloSalaryTables
@@ -221,8 +228,9 @@ private enum class FlowScreen(val title: String) {
     METHOD("Lønn og betaling"),
     PAY("Lønnsopplysninger"),
     ROSTER("Grunnturnus"),
+    HOLIDAY_PLAN("Arbeidsgivers arbeidsplan"),
     TRAVEL("Reise til og fra"),
-    TRIP_PLAN("Arbeidsplan på turen"),
+    TRIP_PLAN("Arbeid på turen"),
     CALCULATION("Beregning"),
     SETTLEMENT("Betalingsforslag"),
     CONTROL("Kontroll"),
@@ -239,6 +247,11 @@ private enum class PlanFabAction {
     TRAVEL,
     RESTING_NIGHT,
     OTHER,
+}
+
+private enum class PlanEntryMode {
+    HOLIDAY_PLAN,
+    ACTUAL_WORK,
 }
 
 private data class PlanPeriodEditTarget(
@@ -293,6 +306,17 @@ internal fun applyRosterTemplateToPrimaryDraft(
     return drafts.toMutableList().also { it[0] = replacement }
 }
 
+internal fun updateRosterWorkDraftAt(
+    drafts: List<RosterWorkDraft>,
+    index: Int,
+    transform: (RosterWorkDraft) -> RosterWorkDraft,
+): List<RosterWorkDraft> {
+    if (index !in drafts.indices) return drafts
+    return drafts.toMutableList().also { current ->
+        current[index] = transform(current[index])
+    }
+}
+
 
 private data class SettlementSummary(
     val calculatedAmount: BigDecimal,
@@ -319,6 +343,8 @@ private class FerieturSessionViewModel(
     val employerKind = mutableStateOf(EmployerKind.UNSPECIFIED)
     val payingParty = mutableStateOf(PayingParty.UNSPECIFIED)
     val rosterComparisonMode = mutableStateOf(RosterComparisonMode.USE_NORMAL_ROSTER)
+    val holidayWorkPlanStatus = mutableStateOf(HolidayWorkPlanStatus.NOT_CLARIFIED)
+    val workPlanBasis = mutableStateOf(TripWorkPlanBasis.NOT_CLARIFIED)
     val tripTitle = mutableStateOf(defaults.title)
     val startDate = mutableStateOf(defaults.startDate)
     val endDate = mutableStateOf(defaults.endDate)
@@ -333,7 +359,13 @@ private class FerieturSessionViewModel(
     val plans = mutableStateOf(
         tripDates(defaults.startDate, defaults.endDate).associateWith { emptyList<PlannedBlock>() },
     )
+    val holidayPlans = mutableStateOf(
+        tripDates(defaults.startDate, defaults.endDate).associateWith { emptyList<PlannedBlock>() },
+    )
     val selectedRosterDate = mutableStateOf<LocalDate?>(null)
+    val selectedHolidayPlanPeriod = mutableStateOf<PlanPeriodEditTarget?>(null)
+    val pendingHolidayPlanAction = mutableStateOf<PlanFabAction?>(null)
+    val pendingHolidayPlanDate = mutableStateOf<LocalDate?>(null)
     val selectedPlanPeriod = mutableStateOf<PlanPeriodEditTarget?>(null)
     val pendingPlanAction = mutableStateOf<PlanFabAction?>(null)
     val pendingPlanDate = mutableStateOf<LocalDate?>(null)
@@ -341,6 +373,7 @@ private class FerieturSessionViewModel(
     val returnDeparture = mutableStateOf(LocalDateTime.of(defaults.endDate, defaults.endTime).minusHours(4))
     val outboundTravelKind = mutableStateOf<TimeKind?>(null)
     val returnTravelKind = mutableStateOf<TimeKind?>(null)
+    val showHolidayPlanValidation = mutableStateOf(false)
     val showPlanValidation = mutableStateOf(false)
     val settlementMode = mutableStateOf(SettlementMode.FULL_CALCULATION)
     val settlementAmountText = mutableStateOf("")
@@ -508,6 +541,8 @@ fun FerieturApp() {
     var employerKind by session.employerKind
     var payingParty by session.payingParty
     var rosterComparisonMode by session.rosterComparisonMode
+    var holidayWorkPlanStatus by session.holidayWorkPlanStatus
+    var workPlanBasis by session.workPlanBasis
     var tripTitle by session.tripTitle
     var startDate by session.startDate
     var endDate by session.endDate
@@ -520,7 +555,11 @@ fun FerieturApp() {
     var rosterGapConfirmed by session.rosterGapConfirmed
     var roster by session.roster
     var plans by session.plans
+    var holidayPlans by session.holidayPlans
     var selectedRosterDate by session.selectedRosterDate
+    var selectedHolidayPlanPeriod by session.selectedHolidayPlanPeriod
+    var pendingHolidayPlanAction by session.pendingHolidayPlanAction
+    var pendingHolidayPlanDate by session.pendingHolidayPlanDate
     var selectedPlanPeriod by session.selectedPlanPeriod
     var pendingPlanAction by session.pendingPlanAction
     var pendingPlanDate by session.pendingPlanDate
@@ -528,6 +567,7 @@ fun FerieturApp() {
     var returnDeparture by session.returnDeparture
     var outboundTravelKind by session.outboundTravelKind
     var returnTravelKind by session.returnTravelKind
+    var showHolidayPlanValidation by session.showHolidayPlanValidation
     var showPlanValidation by session.showPlanValidation
     var settlementMode by session.settlementMode
     var settlementAmountText by session.settlementAmountText
@@ -544,6 +584,68 @@ fun FerieturApp() {
     val storageIssues by session.storageIssues
     val libraryLoaded by session.libraryLoaded
     val exportState by session.exportState
+    var backupBusy by rememberSaveable { mutableStateOf(false) }
+    var backupMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var backupMessageIsError by rememberSaveable { mutableStateOf(false) }
+
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        if (uri != null) {
+            backupBusy = true
+            backupMessage = null
+            appInfoScope.launch {
+                runCatching {
+                    appContext.contentResolver.openOutputStream(uri)?.use { output ->
+                        tripRepository.exportBackup(
+                            output = output,
+                            appVersionName = BuildConfig.VERSION_NAME,
+                            appVersionCode = BuildConfig.VERSION_CODE,
+                        )
+                    } ?: error("Kunne ikke åpne valgt fil for skriving.")
+                }.onSuccess { count ->
+                    backupMessageIsError = false
+                    backupMessage = if (count == 1) {
+                        "1 tur er eksportert til lokal sikkerhetskopi."
+                    } else {
+                        "$count turer er eksportert til lokal sikkerhetskopi."
+                    }
+                }.onFailure { error ->
+                    backupMessageIsError = true
+                    backupMessage = error.message ?: "Kunne ikke eksportere sikkerhetskopien."
+                }
+                backupBusy = false
+            }
+        }
+    }
+
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            backupBusy = true
+            backupMessage = null
+            appInfoScope.launch {
+                runCatching {
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        tripRepository.importBackup(input)
+                    } ?: error("Kunne ikke åpne valgt sikkerhetskopi.")
+                }.onSuccess { result ->
+                    backupMessageIsError = false
+                    backupMessage = if (result.importedCount == 1) {
+                        "1 tur er gjenopprettet. Eksisterende versjon med samme tur-ID ble sikkerhetskopiert først."
+                    } else {
+                        "${result.importedCount} turer er gjenopprettet. Eksisterende versjoner med samme tur-ID ble sikkerhetskopiert først."
+                    }
+                    session.refreshLibrary()
+                }.onFailure { error ->
+                    backupMessageIsError = true
+                    backupMessage = error.message ?: "Kunne ikke importere sikkerhetskopien."
+                }
+                backupBusy = false
+            }
+        }
+    }
 
     val fundingMode = rosterComparisonMode.toFundingMode()
     val dates = tripDates(startDate, endDate)
@@ -569,8 +671,28 @@ fun FerieturApp() {
     // and freezes annual salary independently for every effective-date slice.
     val annualSalary = OsloSalaryTables.annualSalaryForDate(salaryStep, startDate) ?: BigDecimal.ZERO
     val effectiveRoster = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) roster else emptyMap<LocalDate, String>()
+    val runtimePlans = remember(fundingMode, workPlanBasis, dates, plans, holidayPlans) {
+        TripPlanEngine.runtimePlansForWorkPlanBasis(
+            fundingMode = fundingMode,
+            workPlanBasis = workPlanBasis,
+            dates = dates,
+            actualPlans = plans,
+            holidayPlans = holidayPlans,
+        )
+    }
+    val effectiveHolidayWorkPlanStatus = remember(
+        fundingMode,
+        workPlanBasis,
+        holidayWorkPlanStatus,
+    ) {
+        TripPlanEngine.calculationHolidayWorkPlanStatusForBasis(
+            fundingMode = fundingMode,
+            workPlanBasis = workPlanBasis,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
+        )
+    }
     val rosterGapEvidence = if (rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
-        TripPlanEngine.rosterUncoveredEvidence(TripPlanEngine.projectRange(dates, plans), effectiveRoster, tripStart, tripEnd)
+        TripPlanEngine.rosterUncoveredEvidence(TripPlanEngine.projectRange(dates, runtimePlans), effectiveRoster, tripStart, tripEnd)
     } else {
         emptyList()
     }
@@ -583,7 +705,37 @@ fun FerieturApp() {
         tripEnd = tripEnd,
         returnKind = returnTravelKind,
     )
-    val planIssues = planValidationIssues(dates, plans, tripStart, tripEnd)
+    val planIssues = planValidationIssues(
+        dates = dates,
+        plans = plans,
+        tripStart = tripStart,
+        tripEnd = tripEnd,
+        fundingMode = fundingMode,
+        holidayWorkPlanStatus = holidayWorkPlanStatus,
+    )
+    val holidayPlanIssues = planValidationIssues(
+        dates = dates,
+        plans = holidayPlans,
+        tripStart = tripStart,
+        tripEnd = tripEnd,
+        fundingMode = fundingMode,
+        holidayWorkPlanStatus = holidayWorkPlanStatus,
+    )
+    val holidayPlanRequired =
+        fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL &&
+            workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN
+    val holidayPlanHasEntries = holidayPlans.values.flatten().isNotEmpty()
+    val holidayPlanReady =
+        !holidayPlanRequired ||
+            (holidayPlanHasEntries && holidayPlanIssues.isEmpty())
+    val canSeedHolidayPlanFromRoster =
+        holidayPlanRequired &&
+            holidayPlans.values.flatten().none { !it.kind.isTravelKind() } &&
+            effectiveRoster.values.any { encoded ->
+                RosterEntryCodec.decode(encoded).any {
+                    it.category != ShiftCategory.OFF && it.start != null && it.end != null
+                }
+            }
     val travelValid = validRange &&
         outboundTravelKind != null && returnTravelKind != null &&
         outboundArrival.isAfter(tripStart) && !outboundArrival.isAfter(returnDeparture) &&
@@ -591,9 +743,10 @@ fun FerieturApp() {
 
     val tariffRuntimeResult: TariffRuntimeCalculationResult? = remember(
         fundingMode,
+        effectiveHolidayWorkPlanStatus,
         dates,
         effectiveRoster,
-        plans,
+        runtimePlans,
         salaryStep,
         weeklyBasis,
         weekendProfile,
@@ -605,9 +758,10 @@ fun FerieturApp() {
         if (validRange && chapter20Applicable && salaryRangeSupported) {
             FerieturTariffRuntimeCalculator.calculate(
                 fundingMode = fundingMode,
+                holidayWorkPlanStatus = effectiveHolidayWorkPlanStatus,
                 dates = dates,
                 roster = effectiveRoster,
-                plans = plans,
+                plans = runtimePlans,
                 salaryStep = salaryStep,
                 weeklyBasis = weeklyBasis,
                 weekendProfile = weekendProfile,
@@ -625,7 +779,7 @@ fun FerieturApp() {
         fundingMode,
         dates,
         effectiveRoster,
-        plans,
+        runtimePlans,
         weeklyBasis,
         tripStart,
         tripEnd,
@@ -636,7 +790,7 @@ fun FerieturApp() {
                 fundingMode = fundingMode,
                 dates = dates,
                 roster = effectiveRoster,
-                plans = plans,
+                plans = runtimePlans,
                 weeklyBasis = weeklyBasis,
                 tripStart = tripStart,
                 tripEnd = tripEnd,
@@ -662,6 +816,8 @@ fun FerieturApp() {
             employerKind = employerKind,
             payingParty = payingParty,
             rosterComparisonMode = rosterComparisonMode,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
+            workPlanBasis = workPlanBasis,
             startDate = startDate,
             endDate = endDate,
             startTime = startTime,
@@ -673,6 +829,7 @@ fun FerieturApp() {
             rosterGapConfirmed = rosterGapConfirmed,
             roster = roster,
             plans = plans,
+            holidayPlans = holidayPlans,
             outboundArrival = outboundArrival,
             returnDeparture = returnDeparture,
             outboundTravelKind = outboundTravelKind,
@@ -697,6 +854,8 @@ fun FerieturApp() {
         employerKind = EmployerKind.UNSPECIFIED
         payingParty = PayingParty.UNSPECIFIED
         rosterComparisonMode = RosterComparisonMode.USE_NORMAL_ROSTER
+        holidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED
+        workPlanBasis = TripWorkPlanBasis.NOT_CLARIFIED
         tripTitle = defaults.title
         startDate = newStart
         endDate = newEnd
@@ -709,7 +868,11 @@ fun FerieturApp() {
         rosterGapConfirmed = false
         roster = newRoster
         plans = tripDates(newStart, newEnd).associateWith { emptyList<PlannedBlock>() }
+        holidayPlans = tripDates(newStart, newEnd).associateWith { emptyList<PlannedBlock>() }
         selectedRosterDate = null
+        selectedHolidayPlanPeriod = null
+        pendingHolidayPlanAction = null
+        pendingHolidayPlanDate = null
         selectedPlanPeriod = null
         pendingPlanAction = null
         pendingPlanDate = null
@@ -717,6 +880,7 @@ fun FerieturApp() {
         returnDeparture = LocalDateTime.of(newEnd, newEndTime).minusHours(4)
         outboundTravelKind = null
         returnTravelKind = null
+        showHolidayPlanValidation = false
         showPlanValidation = false
         settlementMode = SettlementMode.FULL_CALCULATION
         settlementAmountText = ""
@@ -738,6 +902,8 @@ fun FerieturApp() {
         employerKind = effectiveSaved.employerKind
         payingParty = effectiveSaved.payingParty
         rosterComparisonMode = effectiveSaved.rosterComparisonMode
+        holidayWorkPlanStatus = effectiveSaved.holidayWorkPlanStatus
+        workPlanBasis = effectiveSaved.workPlanBasis
         tripTitle = effectiveSaved.title
         startDate = effectiveSaved.startDate
         endDate = effectiveSaved.endDate
@@ -756,7 +922,11 @@ fun FerieturApp() {
         rosterGapConfirmed = effectiveSaved.rosterGapConfirmed
         roster = effectiveSaved.roster
         plans = effectiveSaved.plans
+        holidayPlans = effectiveSaved.holidayPlans
         selectedRosterDate = null
+        selectedHolidayPlanPeriod = null
+        pendingHolidayPlanAction = null
+        pendingHolidayPlanDate = null
         selectedPlanPeriod = null
         pendingPlanAction = null
         pendingPlanDate = null
@@ -764,6 +934,7 @@ fun FerieturApp() {
         returnDeparture = effectiveSaved.returnDeparture
         outboundTravelKind = effectiveSaved.outboundTravelKind
         returnTravelKind = effectiveSaved.returnTravelKind
+        showHolidayPlanValidation = false
         showPlanValidation = false
         settlementMode = runCatching { SettlementMode.valueOf(effectiveSaved.settlementMode) }.getOrDefault(SettlementMode.FULL_CALCULATION)
         settlementAmountText = effectiveSaved.settlementAmountText
@@ -781,10 +952,38 @@ fun FerieturApp() {
         lastSavedAt = effectiveSaved.updatedAtEpochMillis
         saveState = DraftSaveState.SAVED
         directFromOverview = false
-        screen = if (restoredScreen == FlowScreen.SUMMARY && finalizedSnapshot == null) {
-            FlowScreen.CONTROL
-        } else {
-            restoredScreen
+        val restoredFundingMode = effectiveSaved.rosterComparisonMode.toFundingMode()
+        val needsWorkPlanBasisReview =
+            restoredFundingMode == FundingMode.TURNUS_PLUS_EXTERNAL &&
+                effectiveSaved.workPlanBasis == TripWorkPlanBasis.NOT_CLARIFIED &&
+                restoredScreen in setOf(
+                    FlowScreen.PAY,
+                    FlowScreen.ROSTER,
+                    FlowScreen.HOLIDAY_PLAN,
+                    FlowScreen.TRAVEL,
+                    FlowScreen.TRIP_PLAN,
+                    FlowScreen.CALCULATION,
+                    FlowScreen.SETTLEMENT,
+                    FlowScreen.CONTROL,
+                    FlowScreen.SUMMARY,
+                )
+        val needsEmployerPlanReview =
+            restoredFundingMode == FundingMode.TURNUS_PLUS_EXTERNAL &&
+                effectiveSaved.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN &&
+                holidayPlans.values.flatten().isEmpty() &&
+                restoredScreen in setOf(
+                    FlowScreen.TRAVEL,
+                    FlowScreen.TRIP_PLAN,
+                    FlowScreen.CALCULATION,
+                    FlowScreen.SETTLEMENT,
+                    FlowScreen.CONTROL,
+                    FlowScreen.SUMMARY,
+                )
+        screen = when {
+            needsWorkPlanBasisReview -> FlowScreen.METHOD
+            needsEmployerPlanReview -> FlowScreen.HOLIDAY_PLAN
+            restoredScreen == FlowScreen.SUMMARY && finalizedSnapshot == null -> FlowScreen.CONTROL
+            else -> restoredScreen
         }
         tripOverviewOpen = !unsupportedDayTrip && !unsupportedSalaryRange
     }
@@ -856,6 +1055,7 @@ fun FerieturApp() {
         val safeEnd = if (newEnd.isBefore(newStart)) newStart else newEnd
         val oldRoster = roster
         val oldPlans = plans
+        val oldHolidayPlans = holidayPlans
         startDate = newStart
         endDate = safeEnd
         val newDates = tripDates(newStart, safeEnd)
@@ -867,19 +1067,26 @@ fun FerieturApp() {
             currentPlans = oldPlans,
             comparisonMode = rosterComparisonMode,
         )
+        holidayPlans = TripPlanEngine.preservePlanForDateRange(
+            dates = newDates,
+            roster = newRoster,
+            currentPlans = oldHolidayPlans,
+            comparisonMode = rosterComparisonMode,
+        )
         val newTripStart = LocalDateTime.of(newStart, startTime)
         val newTripEnd = LocalDateTime.of(safeEnd, endTime)
         outboundArrival = newTripStart.plusHours(4).coerceAtMost(newTripEnd.minusMinutes(1))
         returnDeparture = newTripEnd.minusHours(4).coerceAtLeast(outboundArrival)
         outboundTravelKind = null
         returnTravelKind = null
+        showHolidayPlanValidation = false
         showPlanValidation = false
         rosterGapConfirmed = false
     }
 
     LaunchedEffect(
-        currentTripId, screen, employerKind, payingParty, rosterComparisonMode, tripTitle, startDate, endDate, startTime, endTime,
-        salaryStep, weeklyBasis, weekendProfile, payslipChecked, rosterGapConfirmed, roster, plans, outboundArrival,
+        currentTripId, screen, employerKind, payingParty, rosterComparisonMode, holidayWorkPlanStatus, workPlanBasis, tripTitle, startDate, endDate, startTime, endTime,
+        salaryStep, weeklyBasis, weekendProfile, payslipChecked, rosterGapConfirmed, roster, plans, holidayPlans, outboundArrival,
         returnDeparture, outboundTravelKind, returnTravelKind, settlementMode, settlementAmountText,
         settlementReason, finalizedSnapshot, finalizationHistory, migrationHistory,
     ) {
@@ -898,9 +1105,14 @@ fun FerieturApp() {
     val nextEnabled = when (screen) {
         FlowScreen.HOME -> true
         FlowScreen.TRIP -> validRange && chapter20Applicable && salaryRangeSupported && tripTitle.isNotBlank()
-        FlowScreen.METHOD -> rosterComparisonMode == RosterComparisonMode.DO_NOT_USE_NORMAL_ROSTER || employerKind == EmployerKind.OSLO_KOMMUNE
+        FlowScreen.METHOD -> when {
+            rosterComparisonMode == RosterComparisonMode.DO_NOT_USE_NORMAL_ROSTER -> true
+            employerKind != EmployerKind.OSLO_KOMMUNE -> false
+            else -> workPlanBasis != TripWorkPlanBasis.NOT_CLARIFIED
+        }
         FlowScreen.PAY -> payslipChecked
         FlowScreen.ROSTER -> rosterComplete
+        FlowScreen.HOLIDAY_PLAN -> true
         FlowScreen.TRAVEL -> travelValid
         FlowScreen.TRIP_PLAN -> true
         FlowScreen.CALCULATION -> runtimeCalculationReady
@@ -909,7 +1121,15 @@ fun FerieturApp() {
                 (settlementAmountText.toNorwegianMoneyOrNull() != null && settlementReason.isNotBlank())
             )
         FlowScreen.CONTROL -> runtimeCalculationReady && runtimeControlReady &&
-            (rosterGapMinutes == 0L || rosterGapConfirmed)
+            (rosterGapMinutes == 0L || rosterGapConfirmed) &&
+            when {
+                fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL -> true
+                workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> true
+                workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                    holidayPlanReady &&
+                        HolidayWorkPlanPolicy.canFinalize(employerKind, holidayWorkPlanStatus)
+                else -> false
+            }
         FlowScreen.SUMMARY -> true
     }
 
@@ -921,7 +1141,7 @@ fun FerieturApp() {
             if (screen == FlowScreen.SUMMARY) {
                 archiveCurrentFinalizationForEdit()
             }
-            screen = previousScreen(screen, fundingMode)
+            screen = previousScreen(screen, fundingMode, workPlanBasis)
         }
     }
 
@@ -932,6 +1152,20 @@ fun FerieturApp() {
             rosterGapConfirmed = false
             showPlanValidation = false
         }
+        if (screen == FlowScreen.HOLIDAY_PLAN) {
+            if (!holidayPlanReady) {
+                showHolidayPlanValidation = true
+                return
+            }
+            showHolidayPlanValidation = false
+            if (plans.values.flatten().none { !it.kind.isTravelKind() }) {
+                plans = TripPlanEngine.seedActualWorkFromHolidayPlan(
+                    dates = dates,
+                    holidayPlans = holidayPlans,
+                    existingActualPlans = plans,
+                )
+            }
+        }
         if (screen == FlowScreen.TRIP_PLAN) {
             if (planIssues.isNotEmpty()) {
                 showPlanValidation = true
@@ -940,6 +1174,28 @@ fun FerieturApp() {
             showPlanValidation = false
         }
         if (screen == FlowScreen.CONTROL) {
+            if (
+                fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL &&
+                workPlanBasis == TripWorkPlanBasis.NOT_CLARIFIED
+            ) {
+                screen = FlowScreen.METHOD
+                return
+            }
+            if (
+                workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN &&
+                !holidayPlanReady
+            ) {
+                showHolidayPlanValidation = true
+                screen = FlowScreen.HOLIDAY_PLAN
+                return
+            }
+            if (
+                workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN &&
+                !HolidayWorkPlanPolicy.canFinalize(employerKind, holidayWorkPlanStatus)
+            ) {
+                screen = FlowScreen.METHOD
+                return
+            }
             if (rosterGapMinutes > 0L && !rosterGapConfirmed) return
             if (planIssues.isNotEmpty()) {
                 showPlanValidation = true
@@ -954,9 +1210,12 @@ fun FerieturApp() {
                 employerKind = employerKind,
                 payingParty = payingParty,
                 rosterComparisonMode = rosterComparisonMode,
+                holidayWorkPlanStatus = holidayWorkPlanStatus,
+                workPlanBasis = workPlanBasis,
+                holidayPlans = holidayPlans,
                 dates = dates,
                 roster = effectiveRoster,
-                plans = plans,
+                plans = runtimePlans,
                 salaryStep = salaryStep,
                 weeklyBasis = weeklyBasis,
                 weekendProfile = weekendProfile,
@@ -979,7 +1238,7 @@ fun FerieturApp() {
             currentDraft()?.let(session::persistDraft)
             return
         }
-        screen = if (screen == FlowScreen.SUMMARY) FlowScreen.HOME else nextScreen(screen, fundingMode)
+        screen = if (screen == FlowScreen.SUMMARY) FlowScreen.HOME else nextScreen(screen, fundingMode, workPlanBasis)
     }
 
     // Android system back / edge-swipe must follow the same in-app hierarchy as
@@ -1071,7 +1330,7 @@ fun FerieturApp() {
             bottomBar = {
                 if (screen != FlowScreen.HOME && !tripOverviewOpen && !aboutOpen) {
                     FlowBottomBar(
-                        nextLabel = nextButtonLabel(screen, fundingMode),
+                        nextLabel = nextButtonLabel(screen, fundingMode, workPlanBasis),
                         nextEnabled = nextEnabled,
                         onBack = ::goBack,
                         onNext = ::goNext,
@@ -1079,11 +1338,20 @@ fun FerieturApp() {
                 }
             },
             floatingActionButton = {
-                if (screen == FlowScreen.TRIP_PLAN && !tripOverviewOpen && !aboutOpen) {
+                if (
+                    (screen == FlowScreen.HOLIDAY_PLAN || screen == FlowScreen.TRIP_PLAN) &&
+                    !tripOverviewOpen &&
+                    !aboutOpen
+                ) {
                     PlanFabMenu(
                         onAction = { action ->
-                            pendingPlanDate = null
-                            pendingPlanAction = action
+                            if (screen == FlowScreen.HOLIDAY_PLAN) {
+                                pendingHolidayPlanDate = null
+                                pendingHolidayPlanAction = action
+                            } else {
+                                pendingPlanDate = null
+                                pendingPlanAction = action
+                            }
                         },
                     )
                 }
@@ -1105,6 +1373,7 @@ fun FerieturApp() {
                     employerKind = employerKind,
                     payingParty = payingParty,
                     fundingMode = fundingMode,
+                    workPlanBasis = workPlanBasis,
                     dates = dates,
                     plans = plans,
                     roster = effectiveRoster,
@@ -1126,11 +1395,22 @@ fun FerieturApp() {
                     onResume = ::resumeTrip,
                     onDuplicate = ::duplicateTrip,
                     onDelete = ::deleteTrip,
+                    backupBusy = backupBusy,
+                    backupMessage = backupMessage,
+                    backupMessageIsError = backupMessageIsError,
+                    onExportBackup = {
+                        backupMessage = null
+                        exportBackupLauncher.launch("ferietur-backup-${LocalDate.now()}.ferietur")
+                    },
+                    onImportBackup = {
+                        backupMessage = null
+                        importBackupLauncher.launch(arrayOf("*/*"))
+                    },
                     onAbout = { aboutOpen = true },
                 )
             FlowScreen.TRIP -> TripBasicsScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 tripTitle = tripTitle,
                 onTripTitle = { tripTitle = it },
@@ -1160,13 +1440,23 @@ fun FerieturApp() {
             )
             FlowScreen.METHOD -> CalculationMethodScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 employerKind = employerKind,
                 onEmployerKind = { employerKind = it },
                 payingParty = payingParty,
                 onPayingParty = { payingParty = it },
                 rosterComparisonMode = rosterComparisonMode,
+                workPlanBasis = workPlanBasis,
+                onWorkPlanBasis = { value ->
+                    if (workPlanBasis != value) {
+                        workPlanBasis = value
+                        holidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED
+                        showHolidayPlanValidation = false
+                    }
+                },
+                holidayWorkPlanStatus = holidayWorkPlanStatus,
+                onHolidayWorkPlanStatus = { holidayWorkPlanStatus = it },
                 onRosterComparisonMode = { mode ->
                     if (mode != rosterComparisonMode) {
                         rosterComparisonMode = mode
@@ -1177,7 +1467,7 @@ fun FerieturApp() {
             )
             FlowScreen.PAY -> PayBasisScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 salaryStep = salaryStep,
                 onSalaryStep = {
@@ -1201,7 +1491,7 @@ fun FerieturApp() {
             )
             FlowScreen.ROSTER -> RosterScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 dates = dates,
                 roster = roster,
@@ -1210,7 +1500,7 @@ fun FerieturApp() {
             )
             FlowScreen.TRAVEL -> TravelScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 tripStart = tripStart,
                 outboundArrival = outboundArrival,
@@ -1224,15 +1514,61 @@ fun FerieturApp() {
                 onReturnKind = { returnTravelKind = it },
                 valid = travelValid,
             )
+            FlowScreen.HOLIDAY_PLAN -> HolidayPlanScreen(
+                padding = padding,
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
+                onBack = ::goBack,
+                dates = dates,
+                roster = effectiveRoster,
+                plans = holidayPlans,
+                required = holidayPlanRequired,
+                validationIssues = if (showHolidayPlanValidation) {
+                    holidayPlanIssues
+                } else {
+                    emptyMap<LocalDate, List<PlanValidationIssue>>()
+                },
+                canSeedPlanFromRoster = canSeedHolidayPlanFromRoster,
+                onSeedPlanFromRoster = {
+                    holidayPlans = TripPlanEngine.seedPlanFromRosterForEditing(
+                        dates = dates,
+                        roster = effectiveRoster,
+                        existingPlans = holidayPlans,
+                        tripStart = tripStart,
+                        tripEnd = tripEnd,
+                    )
+                    showHolidayPlanValidation = false
+                },
+                onEditPeriod = { date, index ->
+                    selectedHolidayPlanPeriod = PlanPeriodEditTarget(date, index)
+                },
+                onAddPeriod = { date ->
+                    pendingHolidayPlanDate = date
+                    pendingHolidayPlanAction = PlanFabAction.OTHER
+                },
+            )
             FlowScreen.TRIP_PLAN -> TripPlanScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 fundingMode = fundingMode,
+                workPlanBasis = workPlanBasis,
                 dates = dates,
                 roster = effectiveRoster,
                 plans = plans,
-                validationIssues = if (showPlanValidation) planIssues else emptyMap<LocalDate, List<PlanValidationIssue>>(),
+                baselinePlans = holidayPlans,
+                derivedPlans = if (
+                    workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN &&
+                    holidayPlanHasEntries
+                ) {
+                    runtimePlans
+                } else {
+                    null
+                },
+                validationIssues = if (showPlanValidation) {
+                    planIssues
+                } else {
+                    emptyMap<LocalDate, List<PlanValidationIssue>>()
+                },
                 onEditPeriod = { date, index -> selectedPlanPeriod = PlanPeriodEditTarget(date, index) },
                 onAddPeriod = { date ->
                     pendingPlanDate = date
@@ -1241,7 +1577,7 @@ fun FerieturApp() {
             )
             FlowScreen.CALCULATION -> CalculationScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 employerKind = employerKind,
                 fundingMode = fundingMode,
@@ -1251,7 +1587,7 @@ fun FerieturApp() {
             )
             FlowScreen.SETTLEMENT -> SettlementScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 employerKind = employerKind,
                 fundingMode = fundingMode,
@@ -1266,11 +1602,11 @@ fun FerieturApp() {
             )
             FlowScreen.CONTROL -> ControlScreen(
                 padding = padding,
-                stepLabel = screenStepLabel(screen, fundingMode),
+                stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                 onBack = ::goBack,
                 employerKind = employerKind,
                 dates = dates,
-                plans = plans,
+                plans = runtimePlans,
                 roster = effectiveRoster,
                 rosterGapEvidence = rosterGapEvidence,
                 rosterGapConfirmed = rosterGapConfirmed,
@@ -1281,7 +1617,7 @@ fun FerieturApp() {
             )
                 FlowScreen.SUMMARY -> FinalSummaryScreen(
                     padding = padding,
-                    stepLabel = screenStepLabel(screen, fundingMode),
+                    stepLabel = screenStepLabel(screen, fundingMode, workPlanBasis),
                     onBack = ::goBack,
                     snapshot = finalizedSnapshot,
                     exportState = exportState,
@@ -1323,6 +1659,101 @@ fun FerieturApp() {
         )
     }
 
+    pendingHolidayPlanAction?.let { action ->
+        val suggestedDate = pendingHolidayPlanDate
+            ?: dates.firstOrNull { holidayPlans[it].orEmpty().isEmpty() }
+            ?: dates.firstOrNull()
+        if (suggestedDate != null) {
+            val initialKind = when (action) {
+                PlanFabAction.ACTIVE_WORK -> TimeKind.ACTIVE_WORK
+                PlanFabAction.TRAVEL -> TimeKind.TRAVEL_UNCERTAIN
+                PlanFabAction.RESTING_NIGHT -> TimeKind.RESTING_NIGHT_WATCH
+                PlanFabAction.OTHER -> null
+            }
+            PlanPeriodEditorSheet(
+                title = "Legg til periode",
+                entryMode = PlanEntryMode.HOLIDAY_PLAN,
+                fundingMode = fundingMode,
+                initialDate = suggestedDate,
+                initialBlock = null,
+                initialKind = initialKind,
+                dates = dates,
+                plans = holidayPlans,
+                tripStart = tripStart,
+                tripEnd = tripEnd,
+                onDismiss = {
+                    pendingHolidayPlanAction = null
+                    pendingHolidayPlanDate = null
+                },
+                onSave = { date, block ->
+                    val updated = TripPlanEngine.normalizeTravelClassification(
+                        date,
+                        holidayPlans[date].orEmpty() + normalizeTravelSleepKind(date, block),
+                    )
+                    holidayPlans = holidayPlans + (date to updated)
+                    showHolidayPlanValidation = false
+                    pendingHolidayPlanAction = null
+                    pendingHolidayPlanDate = null
+                },
+            )
+        }
+    }
+
+    selectedHolidayPlanPeriod?.let { target ->
+        val existing = holidayPlans[target.date].orEmpty().getOrNull(target.index)
+        if (existing != null) {
+            PlanPeriodEditorSheet(
+                title = "Rediger periode",
+                entryMode = PlanEntryMode.HOLIDAY_PLAN,
+                fundingMode = fundingMode,
+                initialDate = target.date,
+                initialBlock = existing,
+                initialKind = existing.kind,
+                dates = dates,
+                plans = holidayPlans,
+                tripStart = tripStart,
+                tripEnd = tripEnd,
+                onDismiss = { selectedHolidayPlanPeriod = null },
+                onSave = { targetDate, updatedBlock ->
+                    if (targetDate == target.date) {
+                        val source = holidayPlans[target.date].orEmpty().toMutableList()
+                        if (target.index in source.indices) {
+                            source[target.index] = normalizeTravelSleepKind(targetDate, updatedBlock)
+                        }
+                        holidayPlans = holidayPlans + (
+                            targetDate to TripPlanEngine.normalizeTravelClassification(targetDate, source)
+                        )
+                    } else {
+                        val source = holidayPlans[target.date].orEmpty().toMutableList()
+                        if (target.index in source.indices) source.removeAt(target.index)
+                        val normalizedSource =
+                            TripPlanEngine.normalizeTravelClassification(target.date, source)
+                        val destination =
+                            holidayPlans[targetDate].orEmpty() +
+                                normalizeTravelSleepKind(targetDate, updatedBlock)
+                        val normalizedDestination =
+                            TripPlanEngine.normalizeTravelClassification(targetDate, destination)
+                        holidayPlans =
+                            holidayPlans +
+                                (target.date to normalizedSource) +
+                                (targetDate to normalizedDestination)
+                    }
+                    showHolidayPlanValidation = false
+                    selectedHolidayPlanPeriod = null
+                },
+                onDelete = {
+                    val source = holidayPlans[target.date].orEmpty().toMutableList()
+                    if (target.index in source.indices) source.removeAt(target.index)
+                    holidayPlans = holidayPlans + (
+                        target.date to TripPlanEngine.normalizeTravelClassification(target.date, source)
+                    )
+                    showHolidayPlanValidation = false
+                    selectedHolidayPlanPeriod = null
+                },
+            )
+        }
+    }
+
     pendingPlanAction?.let { action ->
         val suggestedDate = pendingPlanDate
             ?: dates.firstOrNull { plans[it].orEmpty().isEmpty() }
@@ -1336,6 +1767,8 @@ fun FerieturApp() {
             }
             PlanPeriodEditorSheet(
                 title = "Legg til periode",
+                entryMode = PlanEntryMode.ACTUAL_WORK,
+                fundingMode = fundingMode,
                 initialDate = suggestedDate,
                 initialBlock = null,
                 initialKind = initialKind,
@@ -1367,6 +1800,8 @@ fun FerieturApp() {
         if (existing != null) {
             PlanPeriodEditorSheet(
                 title = "Rediger periode",
+                entryMode = PlanEntryMode.ACTUAL_WORK,
+                fundingMode = fundingMode,
                 initialDate = target.date,
                 initialBlock = existing,
                 initialKind = existing.kind,
@@ -1664,6 +2099,11 @@ private fun HomeScreen(
     onResume: (SavedTripDraft) -> Unit,
     onDuplicate: (SavedTripDraft) -> Unit,
     onDelete: (SavedTripDraft) -> Unit,
+    backupBusy: Boolean,
+    backupMessage: String?,
+    backupMessageIsError: Boolean,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
     onAbout: () -> Unit,
 ) {
     var pendingDelete by remember { mutableStateOf<SavedTripDraft?>(null) }
@@ -1728,6 +2168,76 @@ private fun HomeScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+            }
+
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                Icons.Rounded.Save,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text("Lokal sikkerhetskopi", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Eksporter alle turer til én fil, eller gjenopprett en tidligere Ferietur-backup.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = onExportBackup,
+                                enabled = savedTrips.isNotEmpty() && !backupBusy,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Eksporter")
+                            }
+                            FilledTonalButton(
+                                onClick = onImportBackup,
+                                enabled = !backupBusy,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Importer")
+                            }
+                        }
+                        Text(
+                            "Import fletter inn backupen. En eksisterende tur med samme ID sikkerhetskopieres internt før den erstattes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            backupMessage?.let { message ->
+                item {
+                    InlineMessage(
+                        if (backupMessageIsError) FindingSeverity.CRITICAL else FindingSeverity.OK,
+                        if (backupMessageIsError) "Sikkerhetskopi mislyktes" else "Sikkerhetskopi fullført",
+                        message,
+                    )
                 }
             }
 
@@ -2104,6 +2614,7 @@ private fun TripOverviewScreen(
     employerKind: EmployerKind,
     payingParty: PayingParty,
     fundingMode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
     dates: List<LocalDate>,
     plans: Map<LocalDate, List<PlannedBlock>>,
     roster: Map<LocalDate, String>,
@@ -2121,7 +2632,7 @@ private fun TripOverviewScreen(
         TripPlanEngine.controlFindings(blocks, unresolvedCount, roster, rateSet)
     }.orEmpty()
     val reviewCount = findings.count { it.severity == FindingSeverity.REVIEW || it.severity == FindingSeverity.CRITICAL }
-    val flow = flowSequence(fundingMode)
+    val flow = flowSequence(fundingMode, workPlanBasis)
     val calculationIndex = flow.indexOf(FlowScreen.CALCULATION)
     val currentIndex = flow.indexOf(lastStep)
     val reachedCalculation = currentIndex >= calculationIndex && calculationIndex >= 0
@@ -2235,11 +2746,19 @@ private fun TripOverviewScreen(
         item { OverviewSectionRow("Lønnsopplysninger", "Lønnstrinn, full arbeidsuke og helgesats") { onOpen(FlowScreen.PAY) } }
         if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
             item { OverviewSectionRow("Grunnturnus", "Den vanlige turnusen i perioden") { onOpen(FlowScreen.ROSTER) } }
+            if (workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                item {
+                    OverviewSectionRow(
+                        title = "Arbeidsgivers arbeidsplan",
+                        supporting = "Planen arbeidsgiver faktisk fastsatte for turen",
+                    ) { onOpen(FlowScreen.HOLIDAY_PLAN) }
+                }
+            }
         }
         item {
             OverviewSectionRow(
-                title = "Arbeidsplan",
-                supporting = "Arbeid, reise og nattevakter dag for dag",
+                title = "Arbeid på turen",
+                supporting = "Registrert arbeid og reise under ferieoppholdet",
                 debugTestTag = "overview-nav-trip-plan",
             ) { onOpen(FlowScreen.TRIP_PLAN) }
         }
@@ -2297,8 +2816,9 @@ private fun savedStepLabel(screenName: String): String = when (screenName) {
     "METHOD" -> "Lønn og betaling"
     "PAY" -> "Lønnsopplysninger"
     "ROSTER" -> "Grunnturnus"
+    "HOLIDAY_PLAN" -> "Arbeidsgivers plan"
     "TRAVEL" -> "Reise"
-    "TRIP_PLAN" -> "Arbeidsplan"
+    "TRIP_PLAN" -> "Arbeid på turen"
     "CALCULATION" -> "Beregning"
     "SETTLEMENT" -> "Betalingsforslag"
     "CONTROL" -> "Kontroll"
@@ -2457,6 +2977,10 @@ private fun CalculationMethodScreen(
     payingParty: PayingParty,
     onPayingParty: (PayingParty) -> Unit,
     rosterComparisonMode: RosterComparisonMode,
+    workPlanBasis: TripWorkPlanBasis,
+    onWorkPlanBasis: (TripWorkPlanBasis) -> Unit,
+    holidayWorkPlanStatus: HolidayWorkPlanStatus,
+    onHolidayWorkPlanStatus: (HolidayWorkPlanStatus) -> Unit,
     onRosterComparisonMode: (RosterComparisonMode) -> Unit,
 ) {
     val normalSalarySelected =
@@ -2540,8 +3064,102 @@ private fun CalculationMethodScreen(
                     supporting = "Grunnturnusen holdes utenfor. Turen beregnes som eget oppdrag.",
                     onClick = {
                         onRosterComparisonMode(RosterComparisonMode.DO_NOT_USE_NORMAL_ROSTER)
+                        onWorkPlanBasis(TripWorkPlanBasis.NOT_CLARIFIED)
                     },
                 )
+            }
+        }
+
+        if (normalSalarySelected) {
+            item {
+                MethodFormSection(title = "Hvilken arbeidsplan har arbeidsgiver fastsatt?") {
+                    Text(
+                        "Velg hva arbeidsgiver faktisk har bestemt. En arbeidsfordeling de ansatte lager seg imellom på turen regnes ikke automatisk som en egen arbeidsplan fra arbeidsgiver.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    MethodRadioRow(
+                        selected = workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES,
+                        title = "Vanlig grunnturnus gjelder",
+                        supporting = "Arbeidsgiver har ikke fastsatt en egen arbeidsplan for turen. Ferietur bruker grunnturnusen som sammenligningsgrunnlag.",
+                        onClick = {
+                            onWorkPlanBasis(TripWorkPlanBasis.NORMAL_ROSTER_APPLIES)
+                        },
+                    )
+                    HorizontalDivider()
+                    MethodRadioRow(
+                        selected = workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN,
+                        title = "Arbeidsgiver har fastsatt en egen plan for turen",
+                        supporting = "Velg bare dette når arbeidsgiver faktisk har satt eller godkjent arbeidsplanen som skal gjelde under ferieoppholdet.",
+                        onClick = {
+                            onWorkPlanBasis(TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN)
+                        },
+                    )
+                    HorizontalDivider()
+                    MethodRadioRow(
+                        selected = workPlanBasis == TripWorkPlanBasis.NOT_CLARIFIED,
+                        title = "Ikke avklart",
+                        supporting = "Avklar med leder hvilken arbeidsplan arbeidsgiver mener gjelder før beregningen brukes som betalingsgrunnlag.",
+                        onClick = {
+                            onWorkPlanBasis(TripWorkPlanBasis.NOT_CLARIFIED)
+                        },
+                    )
+                }
+            }
+        }
+
+        if (
+            normalSalarySelected &&
+            workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES
+        ) {
+            item {
+                CompactInfoCard(
+                    title = "Grunnturnusen er baseline",
+                    body = "Ferietur sammenligner registrert arbeid på turen med grunnturnusen. En intern fordeling mellom ansatte erstatter ikke grunnturnusen som arbeidsgivers plan.",
+                )
+            }
+        }
+
+        if (
+            normalSalarySelected &&
+            workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN
+        ) {
+            item {
+                MethodFormSection(title = "Arbeidsgivers arbeidsplan for turen") {
+                    Text(
+                        "Når arbeidsgiver har fastsatt en egen plan, registreres den senere i flyten. Statusen under avgjør hvordan Ferietur kan behandle punkt 20.2.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    MethodRadioRow(
+                        selected = holidayWorkPlanStatus == HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED,
+                        title = "Godkjent og varslet minst 14 dager før",
+                        supporting = "Arbeidsgivers plan var godkjent på forhånd, og endringen ble varslet minst 14 dager før.",
+                        onClick = {
+                            onHolidayWorkPlanStatus(HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED)
+                        },
+                    )
+                    HorizontalDivider()
+                    MethodRadioRow(
+                        selected = holidayWorkPlanStatus == HolidayWorkPlanStatus.NOT_APPROVED_OR_LATE,
+                        title = "Ikke godkjent eller varslet senere",
+                        supporting = "Minst ett av vilkårene over er ikke oppfylt. Ferietur holder tariffbehandlingen åpen der utfallet ikke kan fastsettes sikkert.",
+                        onClick = {
+                            onHolidayWorkPlanStatus(HolidayWorkPlanStatus.NOT_APPROVED_OR_LATE)
+                        },
+                    )
+                    HorizontalDivider()
+                    MethodRadioRow(
+                        selected = holidayWorkPlanStatus == HolidayWorkPlanStatus.NOT_CLARIFIED,
+                        title = "Ikke avklart ennå",
+                        supporting = "Du kan registrere turen videre, men beregningen kan ikke ferdigstilles før planstatusen er avklart.",
+                        onClick = {
+                            onHolidayWorkPlanStatus(HolidayWorkPlanStatus.NOT_CLARIFIED)
+                        },
+                    )
+                }
             }
         }
 
@@ -3358,24 +3976,127 @@ private fun TravelScreen(
 }
 
 @Composable
+private fun HolidayPlanScreen(
+    padding: PaddingValues,
+    stepLabel: String,
+    onBack: () -> Unit,
+    dates: List<LocalDate>,
+    roster: Map<LocalDate, String>,
+    plans: Map<LocalDate, List<PlannedBlock>>,
+    required: Boolean,
+    validationIssues: Map<LocalDate, List<PlanValidationIssue>>,
+    canSeedPlanFromRoster: Boolean,
+    onSeedPlanFromRoster: () -> Unit,
+    onEditPeriod: (LocalDate, Int) -> Unit,
+    onAddPeriod: (LocalDate) -> Unit,
+) {
+    WorkPlanEditorScreen(
+        padding = padding,
+        stepLabel = stepLabel,
+        title = "Arbeidsgivers arbeidsplan",
+        intro = "Registrer bare arbeidsplanen arbeidsgiver faktisk fastsatte for turen. Ikke registrer en intern arbeidsfordeling de ansatte laget seg imellom.",
+        dates = dates,
+        roster = roster,
+        plans = plans,
+        validationIssues = validationIssues,
+        emptyRequiredMessage = if (required && plans.values.flatten().isEmpty()) {
+            "Feriearbeidsplanen er oppgitt som godkjent og varslet minst 14 dager før. Registrer planen før du går videre."
+        } else {
+            null
+        },
+        canSeedPlanFromRoster = canSeedPlanFromRoster,
+        onSeedPlanFromRoster = onSeedPlanFromRoster,
+        derivedPlans = null,
+        onBack = onBack,
+        onEditPeriod = onEditPeriod,
+        onAddPeriod = onAddPeriod,
+    )
+}
+
+@Composable
 private fun TripPlanScreen(
     padding: PaddingValues,
     stepLabel: String,
     onBack: () -> Unit,
     fundingMode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
+    dates: List<LocalDate>,
+    roster: Map<LocalDate, String>,
+    plans: Map<LocalDate, List<PlannedBlock>>,
+    baselinePlans: Map<LocalDate, List<PlannedBlock>>,
+    derivedPlans: Map<LocalDate, List<PlannedBlock>>?,
+    validationIssues: Map<LocalDate, List<PlanValidationIssue>>,
+    onEditPeriod: (LocalDate, Int) -> Unit,
+    onAddPeriod: (LocalDate) -> Unit,
+) {
+    WorkPlanEditorScreen(
+        padding = padding,
+        stepLabel = stepLabel,
+        title = "Arbeid på turen",
+        intro = when {
+            fundingMode != FundingMode.TURNUS_PLUS_EXTERNAL ->
+                "Registrer arbeid og reise på turen. Hele arbeidsplanen brukes i beregningen."
+            workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES ->
+                "Vi sammenligner arbeid på turen med grunnturnusen automatisk og markerer arbeid utenfor avtalt tid."
+            workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                "Vi sammenligner arbeid på turen med arbeidsgivers plan automatisk og markerer arbeid utenfor avtalt tid."
+            else ->
+                "Registrer arbeid og reise på turen. Planbasis må avklares før beregningen kan ferdigstilles."
+        },
+        dates = dates,
+        roster = roster,
+        plans = plans,
+        validationIssues = validationIssues,
+        emptyRequiredMessage = null,
+        canSeedPlanFromRoster = false,
+        onSeedPlanFromRoster = {},
+        derivedPlans = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) derivedPlans else null,
+        comparisonBasis = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) workPlanBasis else null,
+        baselinePlans = baselinePlans,
+        onBack = onBack,
+        onEditPeriod = onEditPeriod,
+        onAddPeriod = onAddPeriod,
+    )
+}
+
+@Composable
+private fun WorkPlanEditorScreen(
+    padding: PaddingValues,
+    stepLabel: String,
+    title: String,
+    intro: String,
     dates: List<LocalDate>,
     roster: Map<LocalDate, String>,
     plans: Map<LocalDate, List<PlannedBlock>>,
     validationIssues: Map<LocalDate, List<PlanValidationIssue>>,
+    emptyRequiredMessage: String?,
+    canSeedPlanFromRoster: Boolean,
+    onSeedPlanFromRoster: () -> Unit,
+    derivedPlans: Map<LocalDate, List<PlannedBlock>>?,
+    comparisonBasis: TripWorkPlanBasis? = null,
+    baselinePlans: Map<LocalDate, List<PlannedBlock>> = emptyMap(),
+    onBack: () -> Unit,
     onEditPeriod: (LocalDate, Int) -> Unit,
     onAddPeriod: (LocalDate) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val firstErrorDate = dates.firstOrNull { validationIssues[it].orEmpty().isNotEmpty() }
+    val derivedBeyondMinutes = derivedPlans
+        ?.let { TripPlanEngine.projectRange(dates, it) }
+        ?.filter {
+            it.holidayWorkPlanRelation == HolidayWorkPlanRelation.BEYOND_HOLIDAY_WORK_PLAN
+        }
+        ?.sumOf { ChronoUnit.MINUTES.between(it.start, it.end) }
 
-    LaunchedEffect(firstErrorDate) {
+    LaunchedEffect(firstErrorDate, canSeedPlanFromRoster) {
         if (firstErrorDate != null) {
-            val headerCount = if (validationIssues.isNotEmpty()) 3 else 2
+            val headerCount =
+                2 +
+                    (if (emptyRequiredMessage != null) 1 else 0) +
+                    (if (canSeedPlanFromRoster) 1 else 0) +
+                    (if (derivedPlans != null) 1 else 0) +
+                    (if (comparisonBasis != null) 1 else 0) +
+                    (if (validationIssues.isNotEmpty()) 1 else 0)
             val index = headerCount + dates.indexOf(firstErrorDate)
             listState.animateScrollToItem(index.coerceAtLeast(0))
         }
@@ -3385,41 +4106,118 @@ private fun TripPlanScreen(
         state = listState,
         modifier = Modifier
             .fillMaxSize()
-            .then(if (BuildConfig.DEBUG) Modifier.testTag("workplan-screen") else Modifier)
             .padding(padding),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            end = 20.dp,
+            top = 8.dp,
+            bottom = 112.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { ScreenHeader("Arbeidsplan", stepLabel, onBack) }
+        item { ScreenHeader(title, stepLabel, onBack) }
         item {
             Text(
-                if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
-                    "Registrer det du faktisk gjør på turen. Grunnturnusen vises bare til sammenligning."
-                } else {
-                    "Registrer det du faktisk gjør på turen. Hele arbeidsplanen brukes i beregningen."
-                },
+                intro,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        if (comparisonBasis != null) {
+            item {
+                WorkComparisonLegend()
+            }
+        }
+
+        emptyRequiredMessage?.let { message ->
+            item {
+                InlineMessage(
+                    FindingSeverity.REVIEW,
+                    "Arbeidsgivers arbeidsplan mangler",
+                    message,
+                )
+            }
+        }
+
+        if (canSeedPlanFromRoster) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Bruk grunnturnusen som utgangspunkt", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Kopier grunnturnusen som et redigerbart utgangspunkt for arbeidsplanen arbeidsgiver fastsatte. Endre deretter bare det arbeidsgiver faktisk la om.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = onSeedPlanFromRoster) {
+                            Text("Legg inn grunnturnusen")
+                        }
+                        Text(
+                            "Kopieringen er bare registreringshjelp. Bekreft at endringene faktisk kommer fra arbeidsgivers plan.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (derivedPlans != null) {
+            item {
+                val beyond = derivedBeyondMinutes ?: 0L
+                InlineMessage(
+                    if (beyond > 0L) FindingSeverity.REVIEW else FindingSeverity.OK,
+                    if (beyond > 0L) {
+                        "Ferietur fant arbeid utover arbeidsgivers plan"
+                    } else {
+                        "Registrert arbeid ligger innenfor arbeidsgivers plan"
+                    },
+                    if (beyond > 0L) {
+                        "${minutesLabel(beyond)} registrert arbeid ligger utenfor arbeidsplanen arbeidsgiver fastsatte. Sammenligningen er beregnet automatisk."
+                    } else {
+                        "Ingen registrert aktiv arbeidstid ligger utover arbeidsplanen arbeidsgiver fastsatte."
+                    },
+                )
+            }
+        }
+
         if (validationIssues.isNotEmpty()) {
             item {
                 InlineMessage(
                     FindingSeverity.CRITICAL,
-                    "${validationIssues.values.flatten().distinctBy { it.id }.size} feil må rettes før du kan gå videre",
-                    "Feilene er markert på dagen det gjelder. Trykk på dagen for å redigere.",
+                    "${validationIssues.values.flatten().distinctBy { it.id }.size} opplysninger må rettes før du kan gå videre",
+                    "De er markert på dagen det gjelder. Trykk på perioden for å redigere.",
                 )
             }
         }
+
         items(dates, key = { it.toString() }) { date ->
             val shifts = RosterEntryCodec.decode(roster[date])
             val blocks = TripPlanEngine.projectVisibleDay(date, plans)
+            val derivedDayBlocks = derivedPlans?.let { derived ->
+                TripPlanEngine.projectVisibleDay(date, derived)
+            }
             TripDayCard(
                 date = date,
                 shifts = shifts,
                 blocks = blocks,
                 roster = roster,
                 plans = plans,
+                comparisonBasis = comparisonBasis,
+                baselinePlans = baselinePlans,
+                derivedBlocks = derivedDayBlocks,
                 issues = validationIssues[date].orEmpty(),
                 onEditPeriod = onEditPeriod,
                 onAddPeriod = onAddPeriod,
@@ -3598,7 +4396,7 @@ private fun CalculationScreen(
         ) {
             item {
                 CalculationNavigationRow(
-                    title = "Allerede dekket av grunnturnusen",
+                    title = "Grunnturnus – kun sammenligning",
                     supporting = buildString {
                         if (result.activeInsideRosterMinutes > 0) {
                             append("${minutesLabel(result.activeInsideRosterMinutes)} aktiv tid")
@@ -3887,14 +4685,14 @@ private fun calculationQuickReasons(line: CalculationLine): List<CalculationQuic
     "active" -> buildList {
         add(
             CalculationQuickReason(
-                title = "Grunnturnusen brukes som sammenligning",
-                explanation = "På denne posten tas arbeid som modellen legger utenfor grunnturnusen med i betalingsgrunnlaget.",
+                title = "Kontroller hvilken arbeidsplan som ligger til grunn",
+                explanation = "Punkt 20.2-posten skal bygge på feriearbeidsplanen. Grunnturnusen er bare sammenligningsinformasjon i den nye ferieplanmodellen.",
                 icon = Icons.Rounded.Schedule,
             ),
         )
         add(
             CalculationQuickReason(
-                title = "Arbeid utover grunnturnusen beregnes med +50 %",
+                title = "Arbeid klassifisert etter punkt 20.2 beregnes med +50 %",
                 explanation = "Timene på denne posten beregnes med timelønn pluss 50 prosent etter Dok. 25 punkt 20.2.",
                 icon = Icons.Rounded.Work,
             ),
@@ -4851,7 +5649,7 @@ private fun SettlementScreen(
                 Text(
                     when {
                         fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL ->
-                            "Beløp som kommer i tillegg til grunnturnusen."
+                            "Tillegg og arbeid som beregnes særskilt for ferieoppholdet."
                         employerKind == EmployerKind.OSLO_KOMMUNE ->
                             "Beregnet betalingsgrunnlag."
                         else ->
@@ -5825,7 +6623,7 @@ private fun FinalSummaryScreen(
                                 "Foreløpig regnegrunnlag"
                             snapshot.rosterComparisonMode ==
                                 RosterComparisonMode.USE_NORMAL_ROSTER ->
-                                "Beløp som kommer i tillegg til grunnturnusen"
+                                "Beregnet tillegg og særskilt godtgjøring"
                             snapshot.isRuleBasisConfirmed ->
                                 "Beregnet lønn og godtgjøring"
                             else ->
@@ -5920,7 +6718,8 @@ private fun FinalSummaryScreen(
 
         item {
             Text(
-                "Full dokumentasjon inkluderer grunnturnus når relevant, arbeidsplan, " +
+                "Full dokumentasjon inkluderer planbasis, grunnturnus når relevant, " +
+                    "arbeidsgivers arbeidsplan når registrert, arbeid på turen, " +
                     "beregningsspesifikasjon, dag-for-dag-kontroll, " +
                     "arbeidstidsvarsler, regler, kilder, satser og versjoner.",
                 style = MaterialTheme.typography.bodySmall,
@@ -5938,6 +6737,41 @@ private fun FinalSummaryScreen(
                     resolved = snapshot.employerKind != EmployerKind.UNSPECIFIED,
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
+
+                if (
+                    snapshot.employerKind == EmployerKind.OSLO_KOMMUNE &&
+                    snapshot.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER
+                ) {
+                    FinalSummaryStatusRow(
+                        label = "Planbasis",
+                        value = when (snapshot.workPlanBasis) {
+                            TripWorkPlanBasis.NORMAL_ROSTER_APPLIES ->
+                                "Vanlig grunnturnus gjelder"
+                            TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN ->
+                                "Arbeidsgiver har fastsatt egen plan"
+                            TripWorkPlanBasis.NOT_CLARIFIED ->
+                                "Ikke lagret i eldre ferdigstilling"
+                        },
+                        resolved = snapshot.workPlanBasis != TripWorkPlanBasis.NOT_CLARIFIED,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
+
+                    if (snapshot.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                        FinalSummaryStatusRow(
+                            label = "Arbeidsgivers plan",
+                            value = when (snapshot.holidayWorkPlanStatus) {
+                                HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED ->
+                                    "Godkjent · minst 14 dagers varsel"
+                                HolidayWorkPlanStatus.NOT_APPROVED_OR_LATE ->
+                                    "Ikke godkjent / kortere varsel"
+                                HolidayWorkPlanStatus.NOT_CLARIFIED ->
+                                    "Ikke avklart"
+                            },
+                            resolved = snapshot.holidayWorkPlanStatus != HolidayWorkPlanStatus.NOT_CLARIFIED,
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(start = 38.dp))
+                    }
+                }
 
                 FinalSummaryStatusRow(
                     label = "Betalingsscenario",
@@ -6276,17 +7110,27 @@ private fun TripDayCard(
     blocks: List<DayProjectedBlock>,
     roster: Map<LocalDate, String>,
     plans: Map<LocalDate, List<PlannedBlock>>,
+    comparisonBasis: TripWorkPlanBasis?,
+    baselinePlans: Map<LocalDate, List<PlannedBlock>>,
+    derivedBlocks: List<DayProjectedBlock>?,
     issues: List<PlanValidationIssue>,
     onEditPeriod: (LocalDate, Int) -> Unit,
     onAddPeriod: (LocalDate) -> Unit,
 ) {
-    val visibleBlocks = blocks.map { it.block }
-    val turnusComparable = visibleBlocks.filter {
-        it.kind == TimeKind.ACTIVE_WORK || it.kind == TimeKind.ACTIVE_NIGHT_WATCH || it.kind.isTravelKind()
-    }
-    val comparableMinutes = turnusComparable.sumOf { ChronoUnit.MINUTES.between(it.start, it.end) }
-    val inside = turnusComparable.sumOf { TripPlanEngine.overlapWithRoster(it, roster) }
-    val outside = (comparableMinutes - inside).coerceAtLeast(0)
+    val comparison = workComparisonVisual(
+        date = date,
+        basis = comparisonBasis,
+        roster = roster,
+        actualBlocks = blocks,
+        employerPlan = baselinePlans,
+        derivedBlocks = derivedBlocks,
+    )
+    val editableSources = blocks.mapNotNull { projected ->
+        sourcePlanIndex(projected, plans)?.let { sourceIndex ->
+            projected.sourceDate to sourceIndex
+        }
+    }.distinct()
+    val singleEditableSource = editableSources.singleOrNull()
 
     Surface(
         modifier = Modifier
@@ -6295,10 +7139,18 @@ private fun TripDayCard(
                 if (BuildConfig.DEBUG) Modifier.testTag("workplan-day-$date") else Modifier
             )
             .then(
-                if (blocks.isEmpty()) {
-                    Modifier.clickable(role = Role.Button) { onAddPeriod(date) }
-                } else {
-                    Modifier
+                when {
+                    blocks.isEmpty() ->
+                        Modifier.clickable(role = Role.Button) { onAddPeriod(date) }
+                    singleEditableSource != null ->
+                        Modifier.clickable(role = Role.Button) {
+                            onEditPeriod(
+                                singleEditableSource.first,
+                                singleEditableSource.second,
+                            )
+                        }
+                    else ->
+                        Modifier
                 },
             ),
         shape = MaterialTheme.shapes.medium,
@@ -6319,12 +7171,21 @@ private fun TripDayCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                     )
-                    if (roster.isNotEmpty()) {
-                        Text(
-                            "Grunnturnus ${if (shifts.isEmpty()) "fri / ikke satt" else rosterDaySummary(shifts)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    when {
+                        comparison != null -> {
+                            Text(
+                                "${comparison.baselineLabel} ${comparisonBaselineSummary(date, comparison.baselineSegments)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        roster.isNotEmpty() -> {
+                            Text(
+                                "Grunnturnus ${if (shifts.isEmpty()) "fri / ikke satt" else rosterDaySummary(shifts)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 Text(
@@ -6335,7 +7196,11 @@ private fun TripDayCard(
                 )
             }
 
-            DayTimeline(date, blocks, plans, onEditPeriod)
+            if (comparison != null) {
+                WorkComparisonTimeline(date, comparison)
+            } else {
+                DayTimeline(date, blocks, plans, onEditPeriod)
+            }
 
             if (blocks.isEmpty()) {
                 Text(
@@ -6352,12 +7217,10 @@ private fun TripDayCard(
                         onEditPeriod = onEditPeriod,
                     )
                 }
-                if (comparableMinutes > 0 && roster.isNotEmpty()) {
-                    Text(
-                        "${minutesLabel(inside)} innen · ${minutesLabel(outside)} utenfor",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                comparison?.let { value ->
+                    if (value.extraMinutes > 0L) {
+                        ExtraWorkSummaryChip(value.extraMinutes)
+                    }
                 }
             }
 
@@ -6429,6 +7292,7 @@ private fun sourcePlanIndex(
         val source = planned.toWorkBlock(projected.sourceDate)
         source.kind == projectedBlock.kind &&
             source.travelNoticeStatus == projectedBlock.travelNoticeStatus &&
+            source.travelDutyStatus == projectedBlock.travelDutyStatus &&
             !source.start.isAfter(projectedBlock.start) &&
             !source.end.isBefore(projectedBlock.end)
     }
@@ -6436,7 +7300,8 @@ private fun sourcePlanIndex(
 }
 
 private fun compactTimeKindLabel(projected: DayProjectedBlock): String {
-    val base = when (projected.block.kind) {
+    val block = projected.block
+    val base = when (block.kind) {
         TimeKind.ACTIVE_WORK -> "Aktivt arbeid"
         TimeKind.ACTIVE_NIGHT_WATCH -> "Nattevakt"
         TimeKind.RESTING_NIGHT_WATCH -> "Hvilende nattevakt"
@@ -6447,10 +7312,20 @@ private fun compactTimeKindLabel(projected: DayProjectedBlock): String {
         TimeKind.TRAVEL_UNCERTAIN -> "Reise · ansvar må avklares"
         TimeKind.ACTIVE_EVENT_ON_RESTING -> "Aktivt arbeid under hvilende natt"
     }
-    return if (projected.continuesFromPreviousDay) {
-        "$base (fra ${dayName(projected.sourceDate).lowercase(norwegian)})"
+    val duty = if (block.kind.isTravelWithoutResponsibility()) {
+        when (block.travelDutyStatus) {
+            TravelDutyStatus.ON_DUTY -> " · på vakt"
+            TravelDutyStatus.OFF_DUTY -> " · ikke på vakt"
+            TravelDutyStatus.NOT_CLARIFIED -> " · vaktstatus ikke avklart"
+        }
     } else {
-        base
+        ""
+    }
+    val label = "$base$duty"
+    return if (projected.continuesFromPreviousDay) {
+        "$label (fra ${dayName(projected.sourceDate).lowercase(norwegian)})"
+    } else {
+        label
     }
 }
 
@@ -6475,6 +7350,397 @@ private fun projectedTimeLabel(
     val start = if (block.start == dayStart) "00:00" else timeFormat.format(block.start.toLocalTime())
     val end = if (block.end == dayEnd) "24:00" else timeFormat.format(block.end.toLocalTime())
     return "$start–$end"
+}
+
+private data class WorkComparisonVisual(
+    val baselineLabel: String,
+    val extraReference: String,
+    val baselineSegments: List<Pair<LocalDateTime, LocalDateTime>>,
+    val insideSegments: List<Pair<LocalDateTime, LocalDateTime>>,
+    val extraSegments: List<Pair<LocalDateTime, LocalDateTime>>,
+) {
+    val actualMinutes: Long
+        get() = (insideSegments + extraSegments).sumOf { (start, end) ->
+            ChronoUnit.MINUTES.between(start, end)
+        }
+
+    val extraMinutes: Long
+        get() = extraSegments.sumOf { (start, end) ->
+            ChronoUnit.MINUTES.between(start, end)
+        }
+}
+
+private fun workComparisonVisual(
+    date: LocalDate,
+    basis: TripWorkPlanBasis?,
+    roster: Map<LocalDate, String>,
+    actualBlocks: List<DayProjectedBlock>,
+    employerPlan: Map<LocalDate, List<PlannedBlock>>,
+    derivedBlocks: List<DayProjectedBlock>?,
+): WorkComparisonVisual? {
+    val actual = mergeVisualIntervals(
+        actualBlocks
+            .map { it.block }
+            .filter(::countsAsComparisonWork)
+            .map { it.start to it.end },
+    )
+
+    return when (basis) {
+        TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> {
+            val baseline = rosterVisualIntervals(date, roster)
+            val extra = actual.flatMap { interval ->
+                subtractVisualInterval(interval, baseline)
+            }.let(::mergeVisualIntervals)
+            val inside = intersectionVisualIntervals(actual, baseline)
+            WorkComparisonVisual(
+                baselineLabel = "Grunnturnus",
+                extraReference = "grunnturnusen",
+                baselineSegments = baseline,
+                insideSegments = inside,
+                extraSegments = extra,
+            )
+        }
+
+        TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN -> {
+            val baseline = mergeVisualIntervals(
+                TripPlanEngine.projectVisibleDay(date, employerPlan)
+                    .map { it.block }
+                    .filter(::countsAsComparisonDuty)
+                    .map { it.start to it.end },
+            )
+            val derived = derivedBlocks.orEmpty()
+                .map { it.block }
+                .filter(::countsAsComparisonWork)
+            val inside = mergeVisualIntervals(
+                derived
+                    .filter {
+                        it.holidayWorkPlanRelation == HolidayWorkPlanRelation.WITHIN_HOLIDAY_WORK_PLAN
+                    }
+                    .map { it.start to it.end },
+            )
+            val extra = mergeVisualIntervals(
+                derived
+                    .filter {
+                        it.holidayWorkPlanRelation == HolidayWorkPlanRelation.BEYOND_HOLIDAY_WORK_PLAN
+                    }
+                    .map { it.start to it.end },
+            )
+            WorkComparisonVisual(
+                baselineLabel = "Arbeidsgivers plan",
+                extraReference = "arbeidsgivers plan",
+                baselineSegments = baseline,
+                insideSegments = inside,
+                extraSegments = extra,
+            )
+        }
+
+        TripWorkPlanBasis.NOT_CLARIFIED,
+        null,
+        -> null
+    }
+}
+
+private fun countsAsComparisonWork(block: WorkBlock): Boolean =
+    block.kind == TimeKind.ACTIVE_WORK ||
+        block.kind == TimeKind.ACTIVE_NIGHT_WATCH ||
+        block.kind == TimeKind.TRAVEL_WITH_RESPONSIBILITY ||
+        (
+            block.kind.isTravelWithoutResponsibility() &&
+                block.travelDutyStatus == TravelDutyStatus.ON_DUTY
+            )
+
+private fun countsAsComparisonDuty(block: WorkBlock): Boolean =
+    countsAsComparisonWork(block) ||
+        block.kind == TimeKind.RESTING_NIGHT_WATCH
+
+private fun rosterVisualIntervals(
+    date: LocalDate,
+    roster: Map<LocalDate, String>,
+): List<Pair<LocalDateTime, LocalDateTime>> {
+    val dayStart = date.atStartOfDay()
+    val dayEnd = date.plusDays(1).atStartOfDay()
+    val sourceDates = listOf(date.minusDays(1), date)
+
+    return mergeVisualIntervals(
+        sourceDates.flatMap { sourceDate ->
+            RosterEntryCodec.decode(roster[sourceDate]).mapNotNull { shift ->
+                val start = shift.start ?: return@mapNotNull null
+                val end = shift.end ?: return@mapNotNull null
+                if (shift.category == ShiftCategory.OFF) return@mapNotNull null
+
+                val startDateTime = LocalDateTime.of(sourceDate, start)
+                val endDate = if (end.isAfter(start)) sourceDate else sourceDate.plusDays(1)
+                val endDateTime = LocalDateTime.of(endDate, end)
+                clipVisualInterval(startDateTime to endDateTime, dayStart, dayEnd)
+            }
+        },
+    )
+}
+
+private fun clipVisualInterval(
+    interval: Pair<LocalDateTime, LocalDateTime>,
+    lower: LocalDateTime,
+    upper: LocalDateTime,
+): Pair<LocalDateTime, LocalDateTime>? {
+    val start = if (interval.first.isAfter(lower)) interval.first else lower
+    val end = if (interval.second.isBefore(upper)) interval.second else upper
+    return (start to end).takeIf { start.isBefore(end) }
+}
+
+private fun mergeVisualIntervals(
+    intervals: List<Pair<LocalDateTime, LocalDateTime>>,
+): List<Pair<LocalDateTime, LocalDateTime>> {
+    if (intervals.isEmpty()) return emptyList()
+    val sorted = intervals
+        .filter { (start, end) -> start.isBefore(end) }
+        .sortedBy { it.first }
+    if (sorted.isEmpty()) return emptyList()
+
+    val merged = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
+    var currentStart = sorted.first().first
+    var currentEnd = sorted.first().second
+
+    sorted.drop(1).forEach { (start, end) ->
+        if (!start.isAfter(currentEnd)) {
+            if (end.isAfter(currentEnd)) currentEnd = end
+        } else {
+            merged += currentStart to currentEnd
+            currentStart = start
+            currentEnd = end
+        }
+    }
+    merged += currentStart to currentEnd
+    return merged
+}
+
+private fun intersectionVisualIntervals(
+    actual: List<Pair<LocalDateTime, LocalDateTime>>,
+    baseline: List<Pair<LocalDateTime, LocalDateTime>>,
+): List<Pair<LocalDateTime, LocalDateTime>> =
+    mergeVisualIntervals(
+        actual.flatMap { (actualStart, actualEnd) ->
+            baseline.mapNotNull { (baselineStart, baselineEnd) ->
+                val start = if (actualStart.isAfter(baselineStart)) actualStart else baselineStart
+                val end = if (actualEnd.isBefore(baselineEnd)) actualEnd else baselineEnd
+                (start to end).takeIf { start.isBefore(end) }
+            }
+        },
+    )
+
+private fun subtractVisualInterval(
+    actual: Pair<LocalDateTime, LocalDateTime>,
+    baseline: List<Pair<LocalDateTime, LocalDateTime>>,
+): List<Pair<LocalDateTime, LocalDateTime>> {
+    var remaining = listOf(actual)
+    baseline.forEach { (baselineStart, baselineEnd) ->
+        remaining = remaining.flatMap { (start, end) ->
+            if (!baselineStart.isBefore(end) || !baselineEnd.isAfter(start)) {
+                listOf(start to end)
+            } else {
+                buildList {
+                    if (start.isBefore(baselineStart)) {
+                        add(start to minOf(end, baselineStart))
+                    }
+                    if (baselineEnd.isBefore(end)) {
+                        add(maxOf(start, baselineEnd) to end)
+                    }
+                }.filter { (partStart, partEnd) -> partStart.isBefore(partEnd) }
+            }
+        }
+    }
+    return remaining
+}
+
+private fun comparisonBaselineSummary(
+    date: LocalDate,
+    intervals: List<Pair<LocalDateTime, LocalDateTime>>,
+): String {
+    if (intervals.isEmpty()) return "fri / ikke satt"
+    val dayStart = date.atStartOfDay()
+    val dayEnd = date.plusDays(1).atStartOfDay()
+    return intervals.joinToString(" + ") { (start, end) ->
+        val startLabel = if (start == dayStart) "00:00" else timeFormat.format(start.toLocalTime())
+        val endLabel = if (end == dayEnd) "24:00" else timeFormat.format(end.toLocalTime())
+        "$startLabel–$endLabel"
+    }
+}
+
+@Composable
+private fun WorkComparisonLegend() {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(22.dp),
+        ) {
+            WorkComparisonLegendItem(
+                color = MaterialTheme.colorScheme.primary,
+                label = "Avtalt tid",
+            )
+            WorkComparisonLegendItem(
+                color = MaterialTheme.colorScheme.error,
+                label = "Ekstra arbeid",
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkComparisonLegendItem(
+    color: Color,
+    label: String,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Surface(
+            modifier = Modifier.size(10.dp),
+            shape = CircleShape,
+            color = color,
+            content = {},
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ExtraWorkSummaryChip(minutes: Long) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.58f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.error.copy(alpha = 0.34f),
+        ),
+    ) {
+        Text(
+            "+ ${minutesLabel(minutes)} utenfor avtalt tid",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun WorkComparisonTimeline(
+    date: LocalDate,
+    comparison: WorkComparisonVisual,
+) {
+    val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val baselineColor = MaterialTheme.colorScheme.primary
+    val ordinaryColor = MaterialTheme.colorScheme.primary
+    val extraColor = MaterialTheme.colorScheme.error
+    val dayStart = date.atStartOfDay()
+
+    fun fraction(value: LocalDateTime): Float =
+        (ChronoUnit.MINUTES.between(dayStart, value).toFloat() / 1440f).coerceIn(0f, 1f)
+
+    @Composable
+    fun TimelineLane(
+        label: String,
+        baseline: Boolean,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                label,
+                modifier = Modifier.weight(0.30f),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Canvas(
+                Modifier
+                    .weight(0.70f)
+                    .height(8.dp),
+            ) {
+                val radius = CornerRadius(size.height / 2f, size.height / 2f)
+                drawRoundRect(trackColor, size = size, cornerRadius = radius)
+
+                if (baseline) {
+                    comparison.baselineSegments.forEach { (start, end) ->
+                        val left = size.width * fraction(start)
+                        val right = size.width * fraction(end)
+                        if (right > left) {
+                            drawRoundRect(
+                                color = baselineColor,
+                                topLeft = Offset(left, 0f),
+                                size = Size(right - left, size.height),
+                                cornerRadius = radius,
+                            )
+                        }
+                    }
+                } else {
+                    comparison.insideSegments.forEach { (start, end) ->
+                        val left = size.width * fraction(start)
+                        val right = size.width * fraction(end)
+                        if (right > left) {
+                            drawRoundRect(
+                                color = ordinaryColor,
+                                topLeft = Offset(left, 0f),
+                                size = Size(right - left, size.height),
+                                cornerRadius = radius,
+                            )
+                        }
+                    }
+                    comparison.extraSegments.forEach { (start, end) ->
+                        val left = size.width * fraction(start)
+                        val right = size.width * fraction(end)
+                        if (right > left) {
+                            drawRoundRect(
+                                color = extraColor,
+                                topLeft = Offset(left, 0f),
+                                size = Size(right - left, size.height),
+                                cornerRadius = radius,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        TimelineLane("Avtalt tid", baseline = true)
+        TimelineLane("Arbeid på turen", baseline = false)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(0.30f))
+            Row(
+                modifier = Modifier.weight(0.70f),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                listOf("00", "06", "12", "18", "24").forEach { label ->
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -6776,10 +8042,9 @@ private fun RosterDayEditorSheet(
                             RosterCodeTextField(
                                 value = draft.code,
                                 onValueChange = { value ->
-                                    workDrafts = workDrafts.updated(
-                                        index,
-                                        draft.copy(code = value),
-                                    )
+                                    workDrafts = updateRosterWorkDraftAt(workDrafts, index) {
+                                        it.copy(code = value)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             )
@@ -6788,7 +8053,9 @@ private fun RosterDayEditorSheet(
                                     label = "Fra",
                                     value = draft.start,
                                     onValue = { value ->
-                                        workDrafts = workDrafts.updated(index, draft.copy(start = value))
+                                        workDrafts = updateRosterWorkDraftAt(workDrafts, index) {
+                                            it.copy(start = value)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                 )
@@ -6796,7 +8063,9 @@ private fun RosterDayEditorSheet(
                                     label = "Til",
                                     value = draft.end,
                                     onValue = { value ->
-                                        workDrafts = workDrafts.updated(index, draft.copy(end = value))
+                                        workDrafts = updateRosterWorkDraftAt(workDrafts, index) {
+                                            it.copy(end = value)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                 )
@@ -7041,6 +8310,8 @@ private fun PlanFabMenu(
 @Composable
 private fun PlanPeriodEditorSheet(
     title: String,
+    entryMode: PlanEntryMode,
+    fundingMode: FundingMode,
     initialDate: LocalDate,
     initialBlock: PlannedBlock?,
     initialKind: TimeKind?,
@@ -7064,6 +8335,9 @@ private fun PlanPeriodEditorSheet(
     var end by remember(initialBlock, initialKind) { mutableStateOf(seed.end) }
     var travelNoticeStatus by remember(initialBlock, initialKind) {
         mutableStateOf(initialBlock?.travelNoticeStatus ?: TravelNoticeStatus.NOT_CLARIFIED)
+    }
+    var travelDutyStatus by remember(initialBlock, initialKind) {
+        mutableStateOf(initialBlock?.travelDutyStatus ?: TravelDutyStatus.NOT_CLARIFIED)
     }
     var dateMenuOpen by remember { mutableStateOf(false) }
     var typeMenuOpen by remember { mutableStateOf(false) }
@@ -7117,7 +8391,14 @@ private fun PlanPeriodEditorSheet(
                             )
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Arbeidsplan", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                if (entryMode == PlanEntryMode.HOLIDAY_PLAN) {
+                                    "Feriearbeidsplan"
+                                } else {
+                                    "Faktisk arbeid"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                            )
                             Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                         }
                         if (onDelete != null) {
@@ -7155,7 +8436,12 @@ private fun PlanPeriodEditorSheet(
                     expanded = typeMenuOpen,
                     onExpandedChange = { typeMenuOpen = it },
                 ) {
-                    periodTypeChoices().forEach { (candidate, typeTitle, _) ->
+                    periodTypeChoices()
+                        .filterNot {
+                            entryMode == PlanEntryMode.HOLIDAY_PLAN &&
+                                it.first == TimeKind.ACTIVE_EVENT_ON_RESTING
+                        }
+                        .forEach { (candidate, typeTitle, _) ->
                         val enabled = candidate != TimeKind.ACTIVE_EVENT_ON_RESTING || hasRestingNight
                         DropdownMenuItem(
                             text = {
@@ -7227,10 +8513,35 @@ private fun PlanPeriodEditorSheet(
 
             if (kind?.isTravelWithoutResponsibility() == true) {
                 item {
-                    TravelNoticeSelector(
-                        selected = travelNoticeStatus,
-                        onSelect = { travelNoticeStatus = it },
+                    TravelDutyStatusSelector(
+                        selected = travelDutyStatus,
+                        onSelect = { travelDutyStatus = it },
                     )
+                }
+            }
+
+
+            if (kind == TimeKind.RESTING_NIGHT_WATCH) {
+                item {
+                    InlineMessage(
+                        FindingSeverity.OK,
+                        "Hvilende nattevakt følger punkt 20.4",
+                        "Nattevakt mellom kl. 23:00 og 07:00 under ferieoppholdet behandles normalt som arbeid av passiv karakter: hele tiden teller som arbeidstid, mens betalingen beregnes 1:3. Grunnturnusen brukes bare som sammenligning.",
+                    )
+                }
+            }
+
+            if (
+                entryMode == PlanEntryMode.ACTUAL_WORK &&
+                kind?.isTravelWithoutResponsibility() == true
+            ) {
+                if (travelDutyStatus == TravelDutyStatus.OFF_DUTY) {
+                    item {
+                        TravelNoticeSelector(
+                            selected = travelNoticeStatus,
+                            onSelect = { travelNoticeStatus = it },
+                        )
+                    }
                 }
                 if (travelOverlapsNight(selectedDate, PlannedBlock(requireNotNull(kind), start, end, travelNoticeStatus))) {
                     item {
@@ -7277,7 +8588,20 @@ private fun PlanPeriodEditorSheet(
                                 selectedDate,
                                 normalizeTravelSleepKind(
                                     selectedDate,
-                                    PlannedBlock(savedKind, start, end, travelNoticeStatus),
+                                    PlannedBlock(
+                                        kind = savedKind,
+                                        start = start,
+                                        end = end,
+                                        travelNoticeStatus =
+                                            if (entryMode == PlanEntryMode.ACTUAL_WORK) {
+                                                travelNoticeStatus
+                                            } else {
+                                                TravelNoticeStatus.NOT_CLARIFIED
+                                            },
+                                        holidayWorkPlanRelation =
+                                            HolidayWorkPlanRelation.NOT_CLARIFIED,
+                                        travelDutyStatus = travelDutyStatus,
+                                    ),
                                 ),
                             )
                         },
@@ -7297,6 +8621,7 @@ private fun PlanPeriodEditorSheet(
 
 private fun samePeriodCategory(first: TimeKind, second: TimeKind): Boolean =
     (first in travelKinds && second in travelKinds) || first == second
+
 
 private fun periodTypeChoices(): List<Triple<TimeKind, String, String>> = listOf(
     Triple(TimeKind.ACTIVE_WORK, "Aktivt arbeid", "Vanlig aktivt arbeid på turen"),
@@ -8008,11 +9333,16 @@ private fun shiftColor(category: ShiftCategory): Color = when (category) {
     else -> MaterialTheme.colorScheme.primaryContainer
 }
 
-private fun flowSequence(mode: FundingMode): List<FlowScreen> = buildList {
+private fun flowSequence(mode: FundingMode, workPlanBasis: TripWorkPlanBasis): List<FlowScreen> = buildList {
     add(FlowScreen.TRIP)
     add(FlowScreen.METHOD)
     add(FlowScreen.PAY)
-    if (mode == FundingMode.TURNUS_PLUS_EXTERNAL) add(FlowScreen.ROSTER)
+    if (mode == FundingMode.TURNUS_PLUS_EXTERNAL) {
+        add(FlowScreen.ROSTER)
+        if (workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+            add(FlowScreen.HOLIDAY_PLAN)
+        }
+    }
     add(FlowScreen.TRIP_PLAN)
     add(FlowScreen.CALCULATION)
     add(FlowScreen.SETTLEMENT)
@@ -8020,30 +9350,47 @@ private fun flowSequence(mode: FundingMode): List<FlowScreen> = buildList {
     add(FlowScreen.SUMMARY)
 }
 
-private fun screenStepLabel(screen: FlowScreen, mode: FundingMode): String {
-    val flow = flowSequence(mode)
+private fun screenStepLabel(
+    screen: FlowScreen,
+    mode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
+): String {
+    val flow = flowSequence(mode, workPlanBasis)
     val index = flow.indexOf(screen)
     return if (index >= 0) "${index + 1} av ${flow.size}" else ""
 }
 
-private fun previousScreen(screen: FlowScreen, mode: FundingMode): FlowScreen {
-    val flow = flowSequence(mode)
+private fun previousScreen(
+    screen: FlowScreen,
+    mode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
+): FlowScreen {
+    val flow = flowSequence(mode, workPlanBasis)
     val index = flow.indexOf(screen)
     return if (index <= 0) FlowScreen.HOME else flow[index - 1]
 }
 
-private fun nextScreen(screen: FlowScreen, mode: FundingMode): FlowScreen {
-    val flow = flowSequence(mode)
+private fun nextScreen(
+    screen: FlowScreen,
+    mode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
+): FlowScreen {
+    val flow = flowSequence(mode, workPlanBasis)
     val index = flow.indexOf(screen)
     return if (index < 0 || index == flow.lastIndex) FlowScreen.HOME else flow[index + 1]
 }
 
-private fun nextButtonLabel(screen: FlowScreen, mode: FundingMode): String = when (nextScreen(screen, mode)) {
+private fun nextButtonLabel(
+    screen: FlowScreen,
+    mode: FundingMode,
+    workPlanBasis: TripWorkPlanBasis,
+): String = when (nextScreen(screen, mode, workPlanBasis)) {
     FlowScreen.METHOD -> "Lønn og betaling"
     FlowScreen.PAY -> "Lønnsopplysninger"
     FlowScreen.ROSTER -> "Grunnturnus"
+    FlowScreen.HOLIDAY_PLAN -> "Arbeidsgivers plan"
     FlowScreen.TRAVEL -> "Reise"
-    FlowScreen.TRIP_PLAN -> "Arbeidsplan"
+    FlowScreen.TRIP_PLAN -> "Arbeid på turen"
     FlowScreen.CALCULATION -> "Beregning"
     FlowScreen.SETTLEMENT -> "Betalingsforslag"
     FlowScreen.CONTROL -> "Kontroll"
@@ -8265,6 +9612,30 @@ private fun InlineTravelKindSelector(selected: TimeKind, onSelect: (TimeKind) ->
 }
 
 @Composable
+private fun TravelDutyStatusSelector(selected: TravelDutyStatus, onSelect: (TravelDutyStatus) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider()
+        Text("Vaktstatus under reisen", fontWeight = FontWeight.Bold)
+        Text("Var du på vakt i denne reiseperioden?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = selected == TravelDutyStatus.ON_DUTY, onClick = { onSelect(TravelDutyStatus.ON_DUTY) }, label = { Text("På vakt") })
+            FilterChip(selected = selected == TravelDutyStatus.OFF_DUTY, onClick = { onSelect(TravelDutyStatus.OFF_DUTY) }, label = { Text("Ikke på vakt") })
+            FilterChip(selected = selected == TravelDutyStatus.NOT_CLARIFIED, onClick = { onSelect(TravelDutyStatus.NOT_CLARIFIED) }, label = { Text("Ikke avklart") })
+        }
+        Text(
+            when (selected) {
+                TravelDutyStatus.ON_DUTY -> "Reisen behandles som arbeidstid. Ferietur sammenligner perioden automatisk med feriearbeidsplanen."
+                TravelDutyStatus.OFF_DUTY -> "Reisen behandles etter reisetidsreglene. Ordinær reisetid kan godtgjøres uten å telle som arbeidstid. Passiv nattreise med søvntillatelse er et eget unntak."
+                TravelDutyStatus.NOT_CLARIFIED -> "Ferietur holder den ordinære reisedelen åpen til vaktstatusen er avklart."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text("Kilde: Dok. 25 punkt 18.4 og 20.3 · Oslo kommune EQS ID 53398", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
 private fun TravelNoticeSelector(selected: TravelNoticeStatus, onSelect: (TravelNoticeStatus) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider()
@@ -8402,10 +9773,27 @@ private fun planValidationIssues(
     plans: Map<LocalDate, List<PlannedBlock>>,
     tripStart: LocalDateTime,
     tripEnd: LocalDateTime,
+    fundingMode: FundingMode,
+    @Suppress("UNUSED_PARAMETER")
+    holidayWorkPlanStatus: HolidayWorkPlanStatus,
 ): Map<LocalDate, List<PlanValidationIssue>> {
     if (dates.isEmpty()) return emptyMap()
     val blocks = TripPlanEngine.projectRange(dates, plans).sortedBy { it.start }
     val byDate = linkedMapOf<LocalDate, MutableList<PlanValidationIssue>>()
+
+    if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) {
+        plans.forEach { (date, dayPlans) ->
+            dayPlans.forEachIndexed { index, block ->
+                if (block.kind.isTravelWithoutResponsibility() && block.travelDutyStatus == TravelDutyStatus.NOT_CLARIFIED) {
+                    byDate.getOrPut(date) { mutableListOf() } += PlanValidationIssue(
+                        id = "travel-duty-status-$date-$index",
+                        title = "Vaktstatus under reisen må avklares",
+                        detail = "Velg om arbeidstakeren var på vakt eller ikke på vakt i reiseperioden. Grunnturnusen brukes bare som sammenligning og avgjør ikke vaktstatusen.",
+                    )
+                }
+            }
+        }
+    }
 
     for (i in blocks.indices) {
         val first = blocks[i]
@@ -8647,6 +10035,12 @@ private fun travelNoticeStatusLabel(status: TravelNoticeStatus): String = when (
     TravelNoticeStatus.NOT_CLARIFIED -> "Varsel: ikke avklart"
 }
 
+private fun travelDutyStatusLabel(status: TravelDutyStatus): String = when (status) {
+    TravelDutyStatus.ON_DUTY -> "Vaktstatus: på vakt"
+    TravelDutyStatus.OFF_DUTY -> "Vaktstatus: ikke på vakt"
+    TravelDutyStatus.NOT_CLARIFIED -> "Vaktstatus: ikke avklart"
+}
+
 private fun dayProjectedBlockLabel(date: LocalDate, projected: DayProjectedBlock): String {
     val block = projected.block
     val dayStart = date.atStartOfDay()
@@ -8656,7 +10050,10 @@ private fun dayProjectedBlockLabel(date: LocalDate, projected: DayProjectedBlock
     val title = buildString {
         append(timeKindLabel(block.kind))
         if (block.kind.isTravelWithoutResponsibility()) {
-            append(" · ").append(travelNoticeStatusLabel(block.travelNoticeStatus).lowercase(norwegian))
+            append(" · ").append(travelDutyStatusLabel(block.travelDutyStatus).lowercase(norwegian))
+            if (block.travelDutyStatus == TravelDutyStatus.OFF_DUTY) {
+                append(" · ").append(travelNoticeStatusLabel(block.travelNoticeStatus).lowercase(norwegian))
+            }
         }
         nightTravelSleepStatus(block.kind, workBlockOverlapsNight(block))?.let { append(" · ").append(it.lowercase(norwegian)) }
     }

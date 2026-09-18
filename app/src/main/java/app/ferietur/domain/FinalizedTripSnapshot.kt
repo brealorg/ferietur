@@ -5,7 +5,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
-const val FERIETUR_RULESET_VERSION = "2026.3"
+const val FERIETUR_RULESET_VERSION = "2026.4"
 
 data class RosterSnapshotRow(
     val date: LocalDate,
@@ -189,6 +189,9 @@ data class FinalizedTripSnapshot(
     val settlement: SettlementSnapshot,
     val findings: List<ControlFinding>,
     val unresolvedRules: List<DomainRule>,
+    val holidayWorkPlanStatus: HolidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED,
+    val workPlanBasis: TripWorkPlanBasis = TripWorkPlanBasis.NOT_CLARIFIED,
+    val employerWorkPlanBlocks: List<WorkBlock> = emptyList(),
 ) {
     init {
         require(tariffContexts.isNotEmpty()) { "Ferdigstilt beregning må ha minst én tariffkontekst." }
@@ -306,6 +309,9 @@ object FinalizedTripSnapshotBuilder {
         createdAt: LocalDateTime = LocalDateTime.now(),
         appVersionName: String = "test",
         appVersionCode: Int = 0,
+        holidayWorkPlanStatus: HolidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED,
+        workPlanBasis: TripWorkPlanBasis = TripWorkPlanBasis.NOT_CLARIFIED,
+        holidayPlans: Map<LocalDate, List<PlannedBlock>> = emptyMap(),
     ): FinalizedTripSnapshot {
         require(TripPlanEngine.chapter20Applies(tripStart, tripEnd)) {
             "Dok. 25 kapittel 20 gjelder ikke dagsturer"
@@ -316,6 +322,40 @@ object FinalizedTripSnapshotBuilder {
             end = tripEnd.toLocalDate(),
         )
         val workBlocks = TripPlanEngine.projectRange(dates, plans)
+        val employerWorkPlanBlocks = when (workPlanBasis) {
+            TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN -> {
+                require(rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+                    "Arbeidsgivers egen turplan krever at vanlig lønn/grunnturnus er valgt som lønnsscenario."
+                }
+                require(holidayWorkPlanStatus != HolidayWorkPlanStatus.NOT_CLARIFIED) {
+                    "Arbeidsgivers arbeidsplan må ha avklart planstatus før ferdigstilling."
+                }
+                TripPlanEngine.projectRange(dates, holidayPlans).also { frozen ->
+                    require(frozen.isNotEmpty()) {
+                        "Arbeidsgivers arbeidsplan kan ikke være tom når den er valgt som planbasis."
+                    }
+                    require(TripPlanEngine.outsideTripRangeBlocks(frozen, tripStart, tripEnd).isEmpty()) {
+                        "Arbeidsgivers arbeidsplan inneholder tid utenfor turperioden."
+                    }
+                    require(!TripPlanEngine.hasUnintendedOverlap(frozen)) {
+                        "Arbeidsgivers arbeidsplan inneholder overlappende perioder."
+                    }
+                }
+            }
+            TripWorkPlanBasis.NORMAL_ROSTER_APPLIES -> {
+                require(rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
+                    "Grunnturnus kan bare være planbasis når vanlig lønn/grunnturnus er valgt."
+                }
+                emptyList()
+            }
+            TripWorkPlanBasis.NOT_CLARIFIED -> emptyList()
+        }
+        val finalizedHolidayWorkPlanStatus =
+            if (workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
+                holidayWorkPlanStatus
+            } else {
+                HolidayWorkPlanStatus.NOT_CLARIFIED
+            }
         require(TripPlanEngine.outsideTripRangeBlocks(workBlocks, tripStart, tripEnd).isEmpty()) {
             "Arbeidsplanen inneholder arbeid utenfor turperioden"
         }
@@ -410,6 +450,9 @@ object FinalizedTripSnapshotBuilder {
             settlement = settlement,
             findings = findings,
             unresolvedRules = unresolvedRules,
+            holidayWorkPlanStatus = finalizedHolidayWorkPlanStatus,
+            workPlanBasis = workPlanBasis,
+            employerWorkPlanBlocks = employerWorkPlanBlocks,
         )
     }
 
@@ -440,6 +483,7 @@ object FinalizedTripSnapshotBuilder {
         salaryTableId: String = "test-table",
         salaryTableEffectiveFrom: LocalDate = tripStart.toLocalDate(),
         salaryTableSourceLabel: String = "Test table",
+        holidayWorkPlanStatus: HolidayWorkPlanStatus = HolidayWorkPlanStatus.NOT_CLARIFIED,
     ): FinalizedTripSnapshot {
         require(TripPlanEngine.chapter20Applies(tripStart, tripEnd)) {
             "Dok. 25 kapittel 20 gjelder ikke dagsturer"
@@ -554,6 +598,7 @@ object FinalizedTripSnapshotBuilder {
             settlement = settlement,
             findings = findings,
             unresolvedRules = unresolvedRules,
+            holidayWorkPlanStatus = holidayWorkPlanStatus,
         )
     }
 }

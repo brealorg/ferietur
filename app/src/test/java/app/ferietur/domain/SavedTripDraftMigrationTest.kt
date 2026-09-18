@@ -50,7 +50,7 @@ class SavedTripDraftMigrationTest {
     }
 
     @Test
-    fun migratedDraftWritesAsV6WithProvenance() {
+    fun migratedDraftWritesAsV7WithWorkPlanReviewProvenance() {
         val migrated = SavedTripDraftCodec.read(
             StringReader(v5Properties(screen = "SUMMARY")),
         )
@@ -58,10 +58,22 @@ class SavedTripDraftMigrationTest {
         SavedTripDraftCodec.write(migrated, writer)
         val saved = Properties().apply { load(StringReader(writer.toString())) }
 
-        assertEquals("6", saved.getProperty("schemaVersion"))
+        assertEquals("10", saved.getProperty("schemaVersion"))
         assertTrue(
             saved.getProperty("migrationHistory")
                 .contains(SavedTripDraftMigrator.MIGRATION_V6_SCHEMA),
+        )
+        assertTrue(
+            saved.getProperty("migrationHistory")
+                .contains(SavedTripDraftMigrator.MIGRATION_V7_WORK_PLAN_STATUS),
+        )
+        assertTrue(
+            saved.getProperty("migrationHistory")
+                .contains(SavedTripDraftMigrator.MIGRATION_V8_PERIOD_RELATION),
+        )
+        assertEquals(
+            HolidayWorkPlanStatus.NOT_CLARIFIED.name,
+            saved.getProperty("holidayWorkPlanStatus"),
         )
         assertFalse(writer.toString().contains("solgården", ignoreCase = true))
     }

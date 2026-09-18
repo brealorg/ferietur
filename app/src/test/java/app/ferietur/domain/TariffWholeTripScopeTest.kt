@@ -13,6 +13,7 @@ class TariffWholeTripScopeTest {
     fun lineScopeCatalogCoversEveryCurrentCalculationLine() {
         val expected = setOf(
             "active",
+            "holiday-work-plan-scope-open",
             "active-on-resting",
             "evening-night",
             "holiday",
@@ -32,6 +33,7 @@ class TariffWholeTripScopeTest {
             "travel-short-notice-133-open",
             "travel-short-notice-overtime",
             "travel-without-responsibility",
+            "travel-duty-status-open",
             "weekend",
         )
 
@@ -39,6 +41,10 @@ class TariffWholeTripScopeTest {
         assertEquals(TariffCalculationLineScope.WHOLE_TRIP, TariffCalculationLineScopes.requireForLineId("stay-allowance"))
         assertEquals(TariffCalculationLineScope.PER_RESTING_WATCH, TariffCalculationLineScopes.requireForLineId("active-on-resting"))
         assertEquals(TariffCalculationLineScope.SEGMENT_LOCAL, TariffCalculationLineScopes.requireForLineId("active"))
+        assertEquals(
+            TariffCalculationLineScope.SEGMENT_LOCAL,
+            TariffCalculationLineScopes.requireForLineId("holiday-work-plan-scope-open"),
+        )
     }
 
     @Test
