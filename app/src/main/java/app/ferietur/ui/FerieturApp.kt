@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -25,6 +26,7 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -113,6 +115,7 @@ import androidx.compose.material3.isInputValid
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -131,6 +134,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -145,6 +149,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
@@ -520,10 +525,46 @@ fun FerieturApp() {
     var disclaimerAcknowledgedVersion by remember { mutableStateOf<Int?>(null) }
     var disclaimerWriteInProgress by remember { mutableStateOf(false) }
     var disclaimerConfirmed by rememberSaveable { mutableStateOf(false) }
+    var lastAcknowledgedVersionCode by remember { mutableStateOf<Int?>(null) }
+    var updatePromptArmed by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var updateAcknowledgementWriteInProgress by remember { mutableStateOf(false) }
 
     LaunchedEffect(appContext) {
         AppInfoPreferences.disclaimerAcknowledgementVersion(appContext)
             .collectLatest { version -> disclaimerAcknowledgedVersion = version }
+    }
+
+    LaunchedEffect(appContext) {
+        AppInfoPreferences.lastAcknowledgedVersionCode(appContext)
+            .collectLatest { version -> lastAcknowledgedVersionCode = version }
+    }
+
+    LaunchedEffect(disclaimerAcknowledgedVersion, lastAcknowledgedVersionCode) {
+        val disclaimerVersion = disclaimerAcknowledgedVersion ?: return@LaunchedEffect
+        val acknowledgedVersionCode = lastAcknowledgedVersionCode ?: return@LaunchedEffect
+        if (updatePromptArmed != null) return@LaunchedEffect
+
+        when (
+            AppChangelog.updatePromptAction(
+                disclaimerAcknowledgementVersion = disclaimerVersion,
+                lastAcknowledgedVersionCode = acknowledgedVersionCode,
+                currentVersionCode = BuildConfig.VERSION_CODE,
+            )
+        ) {
+            UpdatePromptAction.NONE -> updatePromptArmed = false
+            UpdatePromptAction.SHOW_CHANGELOG -> updatePromptArmed = true
+            UpdatePromptAction.ACKNOWLEDGE_SILENTLY -> {
+                updatePromptArmed = false
+                runCatching {
+                    AppInfoPreferences.acknowledgeVersionCode(
+                        context = appContext,
+                        versionCode = BuildConfig.VERSION_CODE,
+                    )
+                }.onSuccess {
+                    lastAcknowledgedVersionCode = BuildConfig.VERSION_CODE
+                }
+            }
+        }
     }
 
     // Screen-level UI state belongs in an Activity-scoped ViewModel so
@@ -1255,6 +1296,18 @@ fun FerieturApp() {
     val shouldShowDisclaimer = disclaimerAcknowledgedVersion
         ?.let { it < AppInfoPreferences.CURRENT_DISCLAIMER_VERSION }
         ?: false
+    val pendingReleaseNotes = lastAcknowledgedVersionCode
+        ?.let { acknowledged ->
+            AppChangelog.releasesAfter(
+                lastAcknowledgedVersionCode = acknowledged,
+                currentVersionCode = BuildConfig.VERSION_CODE,
+            )
+        }
+        .orEmpty()
+    val shouldShowWhatsNew =
+        updatePromptArmed == true &&
+            pendingReleaseNotes.isNotEmpty() &&
+            !shouldShowDisclaimer
 
     if (shouldShowDisclaimer) {
         AlertDialog(
@@ -1324,11 +1377,33 @@ fun FerieturApp() {
         )
     }
 
+    fun acknowledgeWhatsNew() {
+        if (updateAcknowledgementWriteInProgress) return
+        updateAcknowledgementWriteInProgress = true
+        appInfoScope.launch {
+            runCatching {
+                AppInfoPreferences.acknowledgeVersionCode(
+                    context = appContext,
+                    versionCode = BuildConfig.VERSION_CODE,
+                )
+            }.onSuccess {
+                lastAcknowledgedVersionCode = BuildConfig.VERSION_CODE
+                updatePromptArmed = false
+            }
+            updateAcknowledgementWriteInProgress = false
+        }
+    }
+
     val saveUi = if (currentTripId != null && screen != FlowScreen.HOME) SaveUiState(saveState, ::saveNow) else null
     CompositionLocalProvider(LocalSaveUi provides saveUi) {
         Scaffold(
             bottomBar = {
-                if (screen != FlowScreen.HOME && !tripOverviewOpen && !aboutOpen) {
+                if (
+                    screen != FlowScreen.HOME &&
+                    !tripOverviewOpen &&
+                    !aboutOpen &&
+                    !shouldShowWhatsNew
+                ) {
                     FlowBottomBar(
                         nextLabel = nextButtonLabel(screen, fundingMode, workPlanBasis),
                         nextEnabled = nextEnabled,
@@ -1341,7 +1416,8 @@ fun FerieturApp() {
                 if (
                     (screen == FlowScreen.HOLIDAY_PLAN || screen == FlowScreen.TRIP_PLAN) &&
                     !tripOverviewOpen &&
-                    !aboutOpen
+                    !aboutOpen &&
+                    !shouldShowWhatsNew
                 ) {
                     PlanFabMenu(
                         onAction = { action ->
@@ -1357,7 +1433,15 @@ fun FerieturApp() {
                 }
             },
         ) { padding ->
-            if (aboutOpen) {
+            if (shouldShowWhatsNew) {
+                WhatsNewScreen(
+                    padding = padding,
+                    releases = pendingReleaseNotes,
+                    mode = WhatsNewMode.POST_UPDATE,
+                    writeInProgress = updateAcknowledgementWriteInProgress,
+                    onDone = ::acknowledgeWhatsNew,
+                )
+            } else if (aboutOpen) {
                 AboutFerieturScreen(
                     padding = padding,
                     onBack = { aboutOpen = false },
@@ -1848,6 +1932,86 @@ fun FerieturApp() {
 }
 
 
+@Composable
+private fun WhatsNewChange(change: AppChange) {
+    val badgeLabel = when (change.severity) {
+        ChangeSeverity.NORMAL -> "NYTT"
+        ChangeSeverity.IMPORTANT -> "VIKTIG"
+        ChangeSeverity.CALCULATION_CHANGE -> "BEREGNING"
+    }
+    val badgeContainer = when (change.severity) {
+        ChangeSeverity.NORMAL -> MaterialTheme.colorScheme.surfaceContainerHighest
+        ChangeSeverity.IMPORTANT -> MaterialTheme.colorScheme.primaryContainer
+        ChangeSeverity.CALCULATION_CHANGE -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val badgeContent = when (change.severity) {
+        ChangeSeverity.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant
+        ChangeSeverity.IMPORTANT -> MaterialTheme.colorScheme.onPrimaryContainer
+        ChangeSeverity.CALCULATION_CHANGE -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(
+            shape = MaterialTheme.shapes.small,
+            color = badgeContainer,
+            contentColor = badgeContent,
+        ) {
+            Text(
+                badgeLabel,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Text(
+            change.title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            change.detail,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.WhatsNewScrollEdgeFade(
+    visible: Boolean,
+    atTop: Boolean,
+    bottomInset: Dp = 0.dp,
+) {
+    if (!visible) {
+        return
+    }
+
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val brush = remember(surfaceColor, atTop) {
+        if (atTop) {
+            Brush.verticalGradient(
+                0f to surfaceColor,
+                1f to surfaceColor.copy(alpha = 0f),
+            )
+        } else {
+            Brush.verticalGradient(
+                0f to surfaceColor.copy(alpha = 0f),
+                1f to surfaceColor,
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .align(if (atTop) Alignment.TopCenter else Alignment.BottomCenter)
+            .padding(bottom = if (atTop) 0.dp else bottomInset)
+            .fillMaxWidth()
+            .height(28.dp)
+            .background(brush),
+    )
+}
+
+
 private const val APP_DISCLAIMER_TITLE = "Kontroller alltid beregningen"
 
 private const val APP_DISCLAIMER_TEXT =
@@ -1859,6 +2023,152 @@ private const val APP_DISCLAIMER_TEXT =
 private const val APP_INDEPENDENCE_TEXT =
     "Ferietur er et uavhengig hjelpemiddel og er ikke en offisiell app fra Oslo kommune."
 
+private enum class WhatsNewMode {
+    POST_UPDATE,
+    ABOUT,
+}
+
+@Composable
+private fun WhatsNewScreen(
+    padding: PaddingValues,
+    releases: List<AppReleaseNotes>,
+    mode: WhatsNewMode,
+    writeInProgress: Boolean = false,
+    onDone: () -> Unit,
+) {
+    val latest = releases.maxByOrNull { it.versionCode } ?: return
+    val listState = rememberLazyListState()
+    val canScrollBackward by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
+    val canScrollForward by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
+            val viewportEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+            lastVisible.index < layoutInfo.totalItemsCount - 1 ||
+                lastVisible.offset + lastVisible.size > viewportEnd
+        }
+    }
+    val bottomFadeInset = if (mode == WhatsNewMode.POST_UPDATE) 88.dp else 0.dp
+
+    BackHandler(enabled = true) {
+        if (mode == WhatsNewMode.ABOUT && !writeInProgress) {
+            onDone()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    top = 14.dp,
+                    end = 20.dp,
+                    bottom = if (mode == WhatsNewMode.POST_UPDATE) 112.dp else 32.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                item {
+                    if (mode == WhatsNewMode.ABOUT) {
+                        ScreenHeader(
+                            "Hva er nytt",
+                            "Ferietur ${latest.versionName}",
+                            onDone,
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "Hva er nytt",
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                "Ferietur ${latest.versionName}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        Text(
+                            latest.intro,
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+
+                releases.forEach { release ->
+                    if (releases.size > 1) {
+                        item {
+                            Text(
+                                "Ferietur ${release.versionName}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+
+                    release.changes.forEach { change ->
+                        item {
+                            WhatsNewChange(change)
+                        }
+                    }
+                }
+            }
+
+            WhatsNewScrollEdgeFade(
+                visible = canScrollBackward,
+                atTop = true,
+            )
+            WhatsNewScrollEdgeFade(
+                visible = canScrollForward,
+                atTop = false,
+                bottomInset = bottomFadeInset,
+            )
+        }
+
+        if (mode == WhatsNewMode.POST_UPDATE) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp,
+            ) {
+                androidx.compose.material3.Button(
+                    onClick = onDone,
+                    enabled = !writeInProgress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                ) {
+                    Text(if (writeInProgress) "Lagrer…" else "Forstått")
+                }
+            }
+        }
+    }
+}
+
+
 @Composable
 private fun AboutFerieturScreen(
     padding: PaddingValues,
@@ -1866,7 +2176,11 @@ private fun AboutFerieturScreen(
 ) {
     val context = LocalContext.current
     var showRuleInfo by remember { mutableStateOf(false) }
+    var showWhatsNew by remember { mutableStateOf(false) }
     var emailLaunchFailed by rememberSaveable { mutableStateOf(false) }
+    val currentReleaseNotes = remember(BuildConfig.VERSION_CODE) {
+        AppChangelog.releaseForVersion(BuildConfig.VERSION_CODE)
+    }
     var privacyLaunchFailed by rememberSaveable { mutableStateOf(false) }
     val emailIntent = remember {
         Intent(Intent.ACTION_SENDTO).apply {
@@ -1894,6 +2208,18 @@ private fun AboutFerieturScreen(
             context.startActivity(privacyIntent)
         } catch (_: ActivityNotFoundException) {
             privacyLaunchFailed = true
+        }
+    }
+
+    if (showWhatsNew) {
+        currentReleaseNotes?.let { release ->
+            WhatsNewScreen(
+                padding = padding,
+                releases = listOf(release),
+                mode = WhatsNewMode.ABOUT,
+                onDone = { showWhatsNew = false },
+            )
+            return
         }
     }
 
@@ -2053,6 +2379,31 @@ private fun AboutFerieturScreen(
                     modifier = Modifier.padding(start = 56.dp, top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+
+        currentReleaseNotes?.let { release ->
+            item {
+                ListItem(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showWhatsNew = true },
+                    leadingContent = {
+                        Icon(Icons.Rounded.Info, contentDescription = null)
+                    },
+                    trailingContent = {
+                        Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                    },
+                    supportingContent = {
+                        Text("Endringer i Ferietur ${release.versionName}")
+                    },
+                    content = {
+                        Text(
+                            "Hva er nytt",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
                 )
             }
         }

@@ -17,6 +17,8 @@ internal object AppInfoPreferences {
 
     private val disclaimerAcknowledgementVersionKey =
         intPreferencesKey("disclaimer_ack_version")
+    private val lastAcknowledgedVersionCodeKey =
+        intPreferencesKey("last_acknowledged_version_code")
 
     fun disclaimerAcknowledgementVersion(context: Context): Flow<Int> =
         context.appInfoDataStore.data
@@ -35,6 +37,29 @@ internal object AppInfoPreferences {
         context.appInfoDataStore.edit { preferences ->
             preferences[disclaimerAcknowledgementVersionKey] =
                 CURRENT_DISCLAIMER_VERSION
+        }
+    }
+
+    fun lastAcknowledgedVersionCode(context: Context): Flow<Int> =
+        context.appInfoDataStore.data
+            .catch { error ->
+                if (error is IOException) {
+                    emit(emptyPreferences())
+                } else {
+                    throw error
+                }
+            }
+            .map { preferences ->
+                preferences[lastAcknowledgedVersionCodeKey] ?: 0
+            }
+
+    suspend fun acknowledgeVersionCode(
+        context: Context,
+        versionCode: Int,
+    ) {
+        require(versionCode >= 0) { "versionCode must be non-negative" }
+        context.appInfoDataStore.edit { preferences ->
+            preferences[lastAcknowledgedVersionCodeKey] = versionCode
         }
     }
 }
