@@ -31,7 +31,7 @@ for path in root.rglob('*'):
     parts = rel.parts
     if any(part in excluded_dir_names for part in parts[:-1]):
         continue
-    if path.name in excluded_file_names or path.suffix == '.iml':
+    if path.name in excluded_file_names or path.suffix in {'.iml', '.log'}:
         continue
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     rows.append((rel.as_posix(), digest))

@@ -10,3 +10,5 @@ local.properties
 *.p12
 *.pfx
 *.pk8
+
+*.log
