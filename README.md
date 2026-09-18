@@ -6,18 +6,18 @@
 
 **Planlegging, beregning og dokumentasjon for ferieturer der ansatte følger med.**
 
-**Gjeldende kildekode:** `0.6.0` (`versionCode 54`) · **Siste publiserte APK:** `0.5.6` (`versionCode 53`)
+**Gjeldende kildekode:** `0.6.0` (`versionCode 54`) · **Siste publiserte APK:** `0.6.0` (`versionCode 54`)
 
-[![Release](https://img.shields.io/badge/release-0.5.6-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.5.6)
+[![Release](https://img.shields.io/badge/release-0.6.0-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.6.0)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-F9C66B?style=flat-square&logo=android&logoColor=2A2859)
 ![Package](https://img.shields.io/badge/package-app.ferietur-2A2859?style=flat-square)
 ![Data](https://img.shields.io/badge/data-local_only-F9C66B?style=flat-square)
 
-## [⬇ Last ned Ferietur 0.5.6](https://github.com/brealorg/ferietur/releases/download/v0.5.6/Ferietur-0.5.6.apk)
+## [⬇ Last ned Ferietur 0.6.0](https://github.com/brealorg/ferietur/releases/download/v0.6.0/Ferietur-0.6.0.apk)
 
 **Android APK · Android 8.0 eller nyere**
 
-[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
+[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.0) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
 </div>
 
@@ -98,15 +98,15 @@ Ferietur er laget for lokal bruk:
 
 ## Last ned Ferietur
 
-### Android APK — 0.5.6
+### Android APK — 0.6.0
 
-[**⬇ Last ned Ferietur-0.5.6.apk**](https://github.com/brealorg/ferietur/releases/download/v0.5.6/Ferietur-0.5.6.apk)
+[**⬇ Last ned Ferietur-0.6.0.apk**](https://github.com/brealorg/ferietur/releases/download/v0.6.0/Ferietur-0.6.0.apk)
 
-**Android 8.0 eller nyere (API 26+)** · `versionCode 53` · permanent signert produksjonsutgave
+**Android 8.0 eller nyere (API 26+)** · `versionCode 54` · permanent signert produksjonsutgave
 
-Har du allerede Ferietur installert, kan `0.5.6` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
+Har du allerede Ferietur installert, kan `0.6.0` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
 
-[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
+[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.0) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
 
 > Google Play-versjonen er i closed testing. Den direkte signerte APK-en publiseres parallelt for manuell installasjon og oppdatering.
 
@@ -116,7 +116,7 @@ Har du allerede Ferietur installert, kan `0.5.6` installeres direkte over en tid
 ### APK SHA-256
 
 ```text
-aa00be289a95f01f5abcdde1d3a4be97bc004ea9b7c545c06d243534211348ef
+c950a7a142b6b1fd4f3c8e0bc4a17fc7863daa909c689e30f0c6423ff5efd647
 ```
 
 ### Permanent signeringssertifikat SHA-256
@@ -129,21 +129,24 @@ Checksum og sertifikatfingeravtrykk ligger også som egne filer i releasen.
 
 </details>
 
-## Release 0.5.6
+## Release 0.6.0
 
-`0.5.6` er en kvalitetssikrings- og dokumentasjonsoppdatering med særlig fokus på arbeidstid og etterprøvbarhet.
+`0.6.0` er en større oppdatering av planbasis, arbeid/reise og dokumentasjon for ferieopphold.
 
 Blant endringene:
 
-- arbeidstidskontrollen finner nå høyeste registrerte arbeidstid i løpet av en hvilken som helst sju-dagersperiode, i stedet for å bruke hele turens total
-- tydeligere og mer kompakt arbeidstidsoversikt i PDF
-- bedre klarspråk i kontrollfunn og forklaringer
-- sterkere kildesporing og presentasjon av tariff- og beregningsgrunnlaget
-- flere regresjonstester og kvalitetssikringer
+- skille mellom vanlig grunnturnus og arbeidsgivers arbeidsplan som planbasis
+- mer presis håndtering av arbeidstid, reise og hvilende nattevakt
+- tydeligere vurdering og dokumentasjon av arbeid utenfor avtalt tid
+- sterkere sporbarhet i ferdigstilte beregninger og PDF-er
+- lokal sikkerhetskopi og gjenoppretting via `.ferietur`
+- fullskjerms «Hva er nytt»-visning ved oppdatering
 
-Den direkte APK-en beholder den permanente signeringsidentiteten fra tidligere utgaver. Google Play-versjonen distribueres separat gjennom closed testing.
+Den direkte APK-en beholder Ferieturs permanente signeringsidentitet og er runtime-testet som en in-place oppdatering av eksisterende installasjon med bevart appdata.
 
-Se [release notes for 0.5.6](https://github.com/brealorg/ferietur/releases/tag/v0.5.6) for den publiserte releasepakken.
+Google Play-sporet håndteres separat og er fortsatt under behandling.
+
+Se [release notes for 0.6.0](https://github.com/brealorg/ferietur/releases/tag/v0.6.0) for den publiserte releasepakken.
 
 ## Status
 
@@ -152,7 +155,7 @@ Se [release notes for 0.5.6](https://github.com/brealorg/ferietur/releases/tag/v
 | Signert Android APK | ✅ Publisert |
 | Permanent update-signatur | ✅ Etablert |
 | Lokal lagring / PDF | ✅ Produksjon |
-| Google Play | 🧪 Closed testing |
+| Google Play | ⏳ Produksjonstilgang og upload-key-oppdatering under behandling |
 | Kildekodepublisering | ✅ Publisert |
 
 ## Kildekode og lisens
