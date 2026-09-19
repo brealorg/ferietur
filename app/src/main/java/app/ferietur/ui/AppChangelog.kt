@@ -28,6 +28,45 @@ internal enum class UpdatePromptAction {
 internal object AppChangelog {
     val releases: List<AppReleaseNotes> = listOf(
         AppReleaseNotes(
+            versionCode = 55,
+            versionName = "0.6.1",
+            intro =
+                "Denne versjonen endrer ingen beregninger. Den gjør appen tryggere og mindre, " +
+                    "og tydeliggjør hvordan klokkeslett tolkes.",
+            changes = listOf(
+                AppChange(
+                    severity = ChangeSeverity.IMPORTANT,
+                    title = "Alle klokkeslett er norsk tid",
+                    detail =
+                        "Ferietur regner med klokkeslettene slik du registrerer dem. Er reisemålet " +
+                            "i en annen tidssone, regner du om til norsk tid. Krysser en arbeidsperiode " +
+                            "overgangen til sommertid eller normaltid, viser kontrollen nå registrert " +
+                            "og faktisk varighet.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Tryggere import og lagring",
+                    detail =
+                        "Sikkerhetskopier kontrolleres strengere før de importeres, og en forbigående " +
+                            "lesefeil kan ikke lenger føre til at en tur erstattes av en eldre kopi.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Ryddigere PDF-eksport",
+                    detail =
+                        "Eksporterte PDF-er fjernes fra appens mellomlager etter ett døgn, og deling " +
+                            "til andre apper er mer robust.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Mindre app og åpen kildekode",
+                    detail =
+                        "Appen er betydelig mindre å laste ned. Ferietur er nå fri programvare under " +
+                            "GPL-3.0, slik at beregningene kan etterprøves av alle.",
+                ),
+            ),
+        ),
+        AppReleaseNotes(
             versionCode = 54,
             versionName = "0.6.0",
             intro =

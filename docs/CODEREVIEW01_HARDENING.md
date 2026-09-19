@@ -106,17 +106,27 @@ reason, see UXFIX01R1.
 work-plan editor was unified into `WorkPlanEditorScreen`. `TripPlanScreen` now passes a
 debug-only `Modifier.testTag("workplan-screen")` again. Not verified on a device.
 
-## BUILD03 — `staging` build type
+## BUILD03 — `staging` build type in the Ferietur DEV slot
 
-`staging` = `release` (R8 + resource shrinking) with `applicationIdSuffix ".rc"`, label
-"Ferietur RC" and debug signing. It installs next to "Ferietur" and "Ferietur DEV", so minified
-builds can be reviewed without touching real trip data:
+`staging` = the `release` configuration (R8, resource shrinking, not debuggable) with the same
+application ID (`app.ferietur.dev`), label and debug signature as the debug build. It therefore
+replaces "Ferietur DEV" in place instead of adding another app, and real trip data in
+"Ferietur" is never touched:
 
 ```bash
-tools/gradle.sh --offline --dependency-verification=strict installStaging
+tools/gradle.sh --offline --dependency-verification=strict installStaging   # minified DEV
+tools/gradle.sh --offline --dependency-verification=strict installDebug     # back to normal DEV
 ```
 
-Never distribute this variant; it is debug-signed.
+DEV data survives both directions. "Om Ferietur" shows the version suffix `-dev-r8` while the
+minified build is installed. Never distribute this variant; it is debug-signed.
+
+## RELEASE02 — 0.6.1 (versionCode 55) source bump
+
+Bundled release notes for 55 state that no calculation changes. `AppUpdatePresentationTest` no
+longer pins a literal version; it requires the Gradle version to have matching bundled release
+notes. `release/current.env` opens the 0.6.1 transaction with every artifact `PENDING`; the
+full 0.6.0 record is preserved in `release/history/0.6.0.env`.
 
 ## LICENSE01 — GPL-3.0-only
 

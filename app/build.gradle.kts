@@ -11,8 +11,8 @@ android {
         applicationId = "app.ferietur"
         minSdk = 26
         targetSdk = 37
-        versionCode = 54
-        versionName = "0.6.0"
+        versionCode = 55
+        versionName = "0.6.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -33,12 +33,15 @@ android {
             )
         }
         create("staging") {
-            // BUILD03: the release build (R8, shrunk resources) under its own application ID, so a
-            // minified build can be runtime-reviewed next to "Ferietur" and "Ferietur DEV" without
-            // touching real trip data. Debug-signed on purpose: never distribute this variant.
+            // BUILD03: the release configuration (R8, shrunk resources, not debuggable) delivered
+            // into the existing "Ferietur DEV" slot: same application ID and debug signature as
+            // the debug build, so `installStaging` replaces Ferietur DEV in place and
+            // `installDebug` switches back, with DEV data kept both ways. No extra app on the
+            // phone, and real trip data in "Ferietur" is never touched. Never distribute this
+            // variant; it is debug-signed.
             initWith(getByName("release"))
-            applicationIdSuffix = ".rc"
-            versionNameSuffix = "-rc"
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev-r8"
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }

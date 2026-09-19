@@ -2,7 +2,9 @@ package app.ferietur.ui
 
 import java.nio.file.Files
 import java.nio.file.Path
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,7 +57,12 @@ class AppUpdatePresentationTest {
         assertFalse(ui.contains("androidx.compose.ui.window.Dialog("))
         assertFalse(ui.contains(".heightIn(max = 600.dp)"))
 
-        assertTrue(gradle.contains("versionCode = 54"))
-        assertTrue(gradle.contains("versionName = \"0.6.0\""))
+        // The shipped version must always have bundled release notes with the same version name,
+        // so a version bump without a changelog entry fails here instead of being pinned by hand.
+        val versionCode = requireNotNull(Regex("versionCode = ([0-9]+)").find(gradle)).groupValues[1].toInt()
+        val versionName = requireNotNull(Regex("versionName = \"([^\"]+)\"").find(gradle)).groupValues[1]
+        val notes = AppChangelog.releaseForVersion(versionCode)
+        assertNotNull("Mangler «Hva er nytt» for versionCode $versionCode", notes)
+        assertEquals(versionName, notes?.versionName)
     }
 }

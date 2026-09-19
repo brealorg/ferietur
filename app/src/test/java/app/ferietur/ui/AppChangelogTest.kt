@@ -48,6 +48,42 @@ class AppChangelogTest {
     }
 
     @Test
+    fun upgradeFrom54SeesOnlyRelease55AndOlderInstallsSeeBothInOrder() {
+        assertEquals(
+            UpdatePromptAction.SHOW_CHANGELOG,
+            AppChangelog.updatePromptAction(
+                disclaimerAcknowledgementVersion = 2,
+                lastAcknowledgedVersionCode = 54,
+                currentVersionCode = 55,
+            ),
+        )
+        assertEquals(
+            listOf(55),
+            AppChangelog.releasesAfter(lastAcknowledgedVersionCode = 54, currentVersionCode = 55)
+                .map { it.versionCode },
+        )
+        assertEquals(
+            listOf(54, 55),
+            AppChangelog.releasesAfter(lastAcknowledgedVersionCode = 53, currentVersionCode = 55)
+                .map { it.versionCode },
+        )
+    }
+
+    @Test
+    fun release55DoesNotClaimCalculationChanges() {
+        val release = requireNotNull(AppChangelog.releaseForVersion(55))
+        assertEquals("0.6.1", release.versionName)
+        assertTrue(release.changes.none { it.severity == ChangeSeverity.CALCULATION_CHANGE })
+        assertTrue(release.intro.contains("endrer ingen beregninger"))
+    }
+
+    @Test
+    fun versionCodesAreUnique() {
+        val codes = AppChangelog.releases.map { it.versionCode }
+        assertEquals(codes.distinct(), codes)
+    }
+
+    @Test
     fun release54ExplicitlyCallsOutCalculationChanges() {
         val release = requireNotNull(AppChangelog.releaseForVersion(54))
         assertEquals("0.6.0", release.versionName)
