@@ -190,6 +190,30 @@ class TripDraftStoreTest {
         }
     }
 
+    @Test
+    fun hostileTripIdsCanNeverAddressPathsOutsideTheStore() {
+        withStore { store ->
+            val survivor = draft("survivor", 1L, "Skal overleve")
+            store.save(survivor)
+
+            listOf("..", ".", "../escape", "a/b", "a\\b", "", "x".repeat(65), "trip.one").forEach { hostile ->
+                assertTrue(
+                    "save må avvise ID: '$hostile'",
+                    runCatching { store.save(draft(hostile, 2L, "Fiendtlig")) }.isFailure,
+                )
+                assertTrue(
+                    "delete må avvise ID: '$hostile'",
+                    runCatching { store.delete(hostile) }.isFailure,
+                )
+            }
+
+            val library = store.loadLibrary()
+            assertEquals(listOf(survivor), library.drafts)
+            assertTrue(library.issues.isEmpty())
+            assertTrue(store.primaryFileForTest("survivor").exists())
+        }
+    }
+
     private fun draft(
         id: String,
         updatedAt: Long,

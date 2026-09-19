@@ -14,9 +14,14 @@ import app.ferietur.domain.WeeklyBasis
 import app.ferietur.domain.WeekendProfile
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.StringWriter
+import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.Properties
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,6 +70,43 @@ class TripLibraryBackupCodecTest {
         assertTrue(restored.drafts.all {
             it.holidayWorkPlanStatus == HolidayWorkPlanStatus.APPROVED_AND_TIMELY_NOTIFIED
         })
+    }
+
+    @Test
+    fun backupWithPathTraversalTripIdIsRejectedBeforeAnyDraftIsReturned() {
+        val encodedDraft = StringWriter().also { writer ->
+            SavedTripDraftCodec.write(draft("trip-one"), writer)
+        }.toString()
+        assertTrue(encodedDraft.contains("id=trip-one"))
+        val hostileDraft = encodedDraft.replace("id=trip-one", "id=../../evil")
+
+        val manifest = Properties().apply {
+            setProperty("format", "FERIETUR_LIBRARY_BACKUP")
+            setProperty("formatVersion", TripLibraryBackupCodec.FORMAT_VERSION.toString())
+            setProperty("createdAtEpochMillis", "1")
+            setProperty("appVersionName", "test")
+            setProperty("appVersionCode", "1")
+            setProperty("rulesetVersion", FERIETUR_RULESET_VERSION)
+            setProperty("draftSchemaVersion", SavedTripDraftCodec.SCHEMA_VERSION.toString())
+            setProperty("draftCount", "1")
+        }
+        val bytes = ByteArrayOutputStream().also { output ->
+            ZipOutputStream(output).use { zip ->
+                zip.putNextEntry(ZipEntry("manifest.properties"))
+                val manifestText = StringWriter().also { manifest.store(it, null) }.toString()
+                zip.write(manifestText.toByteArray(StandardCharsets.UTF_8))
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("drafts/0000.properties"))
+                zip.write(hostileDraft.toByteArray(StandardCharsets.UTF_8))
+                zip.closeEntry()
+            }
+        }.toByteArray()
+
+        val failure = runCatching {
+            TripLibraryBackupCodec.read(ByteArrayInputStream(bytes))
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
     }
 
     private fun draft(id: String): SavedTripDraft {

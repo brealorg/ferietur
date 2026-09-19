@@ -57,13 +57,32 @@ class UnsupportedSavedTripSchemaException(
     "Unsupported saved trip schema: $schemaVersion (max supported: $maxSupportedSchemaVersion)",
 )
 
+/**
+ * SECURITY04: trip IDs become file and directory names in TripDraftStore and part of the
+ * exported PDF file name. IDs read from external `.ferietur` backups are untrusted, so only a
+ * conservative character set is accepted. App-generated UUIDs always satisfy this rule.
+ */
+object SafeStorageId {
+    const val MAX_LENGTH = 64
+    private val pattern = Regex("^[A-Za-z0-9_-]{1,$MAX_LENGTH}$")
+
+    fun isValid(value: String): Boolean = pattern.matches(value)
+
+    fun requireValid(value: String, label: String = "ID"): String {
+        require(isValid(value)) {
+            "Ugyldig $label: bare bokstavene A–Z, tall, bindestrek og understrek er tillatt (maks $MAX_LENGTH tegn)."
+        }
+        return value
+    }
+}
+
 object SavedTripDraftCodec {
     const val SCHEMA_VERSION = 10
 
     fun write(draft: SavedTripDraft, writer: Writer) {
         val properties = Properties().apply {
             setProperty("schemaVersion", SCHEMA_VERSION.toString())
-            setProperty("id", draft.id)
+            setProperty("id", SafeStorageId.requireValid(draft.id, "tur-ID"))
             setProperty("updatedAtEpochMillis", draft.updatedAtEpochMillis.toString())
             setProperty("screen", draft.screen)
             setProperty("title", draft.title)
@@ -256,7 +275,7 @@ object SavedTripDraftCodec {
         }
 
         val decoded = SavedTripDraft(
-            id = properties.requireProperty("id"),
+            id = SafeStorageId.requireValid(properties.requireProperty("id"), "tur-ID"),
             updatedAtEpochMillis = properties.requireProperty("updatedAtEpochMillis").toLong(),
             screen = properties.getProperty("screen", "TRIP"),
             title = properties.getProperty("title", "Ferietur"),

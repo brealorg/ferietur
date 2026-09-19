@@ -162,6 +162,7 @@ import app.ferietur.data.TripStorageIssueKind
 import app.ferietur.domain.CalculationCertainty
 import app.ferietur.domain.CalculationEvidence
 import app.ferietur.domain.CalculationLine
+import app.ferietur.domain.ClockChangePolicy
 import app.ferietur.domain.ControlFinding
 import app.ferietur.domain.DayCalculationAudit
 import app.ferietur.domain.DayCalculationContribution
@@ -420,7 +421,7 @@ private class FerieturSessionViewModel(
 
     fun refreshLibrary() {
         viewModelScope.launch {
-            runCatching { tripRepository.loadLibrary() }
+            runCatchingCancellable { tripRepository.loadLibrary() }
                 .onSuccess(::applyLibrary)
                 .onFailure(::recordRepositoryFailure)
         }
@@ -434,7 +435,7 @@ private class FerieturSessionViewModel(
             saveState.value = DraftSaveState.SAVING
         }
         viewModelScope.launch {
-            runCatching { tripRepository.save(draft) }
+            runCatchingCancellable { tripRepository.save(draft) }
                 .onSuccess { snapshot ->
                     applyLibrary(snapshot)
                     if (updateSaveIndicator) {
@@ -453,7 +454,7 @@ private class FerieturSessionViewModel(
 
     fun deleteDraft(id: String) {
         viewModelScope.launch {
-            runCatching { tripRepository.delete(id) }
+            runCatchingCancellable { tripRepository.delete(id) }
                 .onSuccess(::applyLibrary)
                 .onFailure(::recordRepositoryFailure)
         }
@@ -461,7 +462,7 @@ private class FerieturSessionViewModel(
 
     fun duplicateDraft(draft: SavedTripDraft) {
         viewModelScope.launch {
-            runCatching { tripRepository.save(draft) }
+            runCatchingCancellable { tripRepository.save(draft) }
                 .onSuccess(::applyLibrary)
                 .onFailure(::recordRepositoryFailure)
         }
@@ -479,7 +480,7 @@ private class FerieturSessionViewModel(
             },
         )
         viewModelScope.launch {
-            runCatching { pdfExportRepository.create(snapshot, variant) }
+            runCatchingCancellable { pdfExportRepository.create(snapshot, variant) }
                 .onSuccess { file ->
                     exportTokenCounter += 1
                     exportState.value = PdfExportUiState(
@@ -555,7 +556,7 @@ fun FerieturApp() {
             UpdatePromptAction.SHOW_CHANGELOG -> updatePromptArmed = true
             UpdatePromptAction.ACKNOWLEDGE_SILENTLY -> {
                 updatePromptArmed = false
-                runCatching {
+                runCatchingCancellable {
                     AppInfoPreferences.acknowledgeVersionCode(
                         context = appContext,
                         versionCode = BuildConfig.VERSION_CODE,
@@ -636,7 +637,7 @@ fun FerieturApp() {
             backupBusy = true
             backupMessage = null
             appInfoScope.launch {
-                runCatching {
+                runCatchingCancellable {
                     appContext.contentResolver.openOutputStream(uri)?.use { output ->
                         tripRepository.exportBackup(
                             output = output,
@@ -667,7 +668,7 @@ fun FerieturApp() {
             backupBusy = true
             backupMessage = null
             appInfoScope.launch {
-                runCatching {
+                runCatchingCancellable {
                     appContext.contentResolver.openInputStream(uri)?.use { input ->
                         tripRepository.importBackup(input)
                     } ?: error("Kunne ikke åpne valgt sikkerhetskopi.")
@@ -1357,7 +1358,7 @@ fun FerieturApp() {
                     onClick = {
                         disclaimerWriteInProgress = true
                         appInfoScope.launch {
-                            runCatching {
+                            runCatchingCancellable {
                                 AppInfoPreferences.acknowledgeCurrentDisclaimer(appContext)
                             }.onSuccess {
                                 disclaimerAcknowledgedVersion =
@@ -1381,7 +1382,7 @@ fun FerieturApp() {
         if (updateAcknowledgementWriteInProgress) return
         updateAcknowledgementWriteInProgress = true
         appInfoScope.launch {
-            runCatching {
+            runCatchingCancellable {
                 AppInfoPreferences.acknowledgeVersionCode(
                     context = appContext,
                     versionCode = BuildConfig.VERSION_CODE,
@@ -3261,6 +3262,14 @@ private fun TripBasicsScreen(
                     modifier = Modifier.weight(1f),
                 )
             }
+        }
+        item {
+            // TIME01: the domain has no time-zone model; all registered times are Norwegian time.
+            Text(
+                ClockChangePolicy.REGISTER_IN_NORWEGIAN_TIME_NOTE,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         if (!validRange) {
             item { InlineMessage(FindingSeverity.CRITICAL, "Slutt må være etter start", "Juster dato eller klokkeslett før du går videre.") }

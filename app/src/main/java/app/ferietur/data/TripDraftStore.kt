@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.core.util.AtomicFile
 import app.ferietur.domain.SavedTripDraft
 import app.ferietur.domain.DecodedSavedTripDraft
+import app.ferietur.domain.SafeStorageId
 import app.ferietur.domain.SavedTripDraftCodec
 import app.ferietur.domain.SavedTripDraftMigrator
 import app.ferietur.domain.UnsupportedSavedTripSchemaException
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 
@@ -41,6 +43,7 @@ private sealed interface DraftReadResult {
     data class Success(val draft: SavedTripDraft, val sourceSchemaVersion: Int) : DraftReadResult
     data class Unsupported(val version: Int, val message: String) : DraftReadResult
     data class Corrupt(val message: String) : DraftReadResult
+    data class IoFailure(val message: String) : DraftReadResult
 }
 
 internal class TripDraftStore private constructor(
@@ -104,8 +107,17 @@ internal class TripDraftStore private constructor(
                             detail = primary.message,
                         )
                     }
+                    is DraftReadResult.IoFailure -> {
+                        // A transient read error says nothing about the file content. Report it
+                        // and leave both the primary file and its backups untouched.
+                        issues += TripStorageIssue(
+                            kind = TripStorageIssueKind.IO_ERROR,
+                            draftId = id,
+                            detail = primary.message,
+                        )
+                    }
                     is DraftReadResult.Corrupt -> {
-                        val recovered = latestValidBackup(id)
+                        val recovered = if (SafeStorageId.isValid(id)) latestValidBackup(id) else null
                         if (recovered != null) {
                             writeAtomically(recovered, backupExisting = false)
                             drafts += recovered
@@ -198,6 +210,7 @@ internal class TripDraftStore private constructor(
                 when (val result = readPlain(backup)) {
                     is DraftReadResult.Success -> result.draft
                     is DraftReadResult.Unsupported,
+                    is DraftReadResult.IoFailure,
                     is DraftReadResult.Corrupt -> null
                 }
             }
@@ -248,15 +261,31 @@ internal class TripDraftStore private constructor(
                     version = error.schemaVersion,
                     message = error.message ?: "Ustøttet lagringsformat.",
                 )
+            is IOException ->
+                DraftReadResult.IoFailure(
+                    message = error.message ?: "Kunne ikke lese den lagrede turen.",
+                )
             else ->
                 DraftReadResult.Corrupt(
                     message = error.message ?: error::class.java.simpleName,
                 )
         }
 
-    private fun fileFor(id: String): File = File(directory, "$id.properties")
+    // SECURITY04: IDs may originate from an imported backup. Validate the character set and
+    // verify containment so an ID can never address a path outside the store directories.
+    private fun fileFor(id: String): File =
+        containedChild(directory, "${SafeStorageId.requireValid(id, "tur-ID")}.properties")
 
-    private fun backupDirectoryFor(id: String): File = File(backupRoot, id)
+    private fun backupDirectoryFor(id: String): File =
+        containedChild(backupRoot, SafeStorageId.requireValid(id, "tur-ID"))
+
+    private fun containedChild(parent: File, name: String): File {
+        val child = File(parent, name)
+        check(child.canonicalFile.parentFile == parent.canonicalFile) {
+            "Lagringsstien for turen ligger utenfor Ferieturs lagringsmappe."
+        }
+        return child
+    }
 
     private companion object {
         const val MAX_BACKUPS_PER_TRIP = 12

@@ -1753,6 +1753,8 @@ object TripPlanEngine {
                 "Du har oppgitt søvntillatelse for ${minutesLabel(passiveNightTravelMinutes)} reise mellom kl. ${clockLabel(rateSet.travelSleepWindowStart)} og ${clockLabel(rateSet.travelSleepWindowEnd)}. Punkt 20.3 regner denne tiden som arbeid av passiv karakter: arbeidstid time for time og grunnbetaling i forholdet ${passiveRatioLabel(rateSet)}.",
             )
         }
+        // TIME01: registered wall-clock durations differ from elapsed time across a DST change.
+        findings += ClockChangePolicy.controlFindings(blocks)
         if (unresolvedRuleCount > 0) {
             findings += ControlFinding(
                 FindingSeverity.OPEN,

@@ -21,6 +21,17 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
         }
+        getByName("release") {
+            // BUILD02: R8 removes unused code (notably most of material-icons-extended) and
+            // unused resources. androidTest runs against the unminified debug build, so every
+            // release candidate must be runtime-reviewed as a release APK before publishing.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
     }
 
     compileOptions {

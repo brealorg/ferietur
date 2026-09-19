@@ -2,6 +2,7 @@ package app.ferietur.export
 
 import app.ferietur.domain.TripWorkPlanBasis
 import app.ferietur.domain.HolidayWorkPlanStatus
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -26,6 +27,7 @@ import app.ferietur.domain.FindingSeverity
 import app.ferietur.domain.PayingParty
 import app.ferietur.domain.PaymentTreatment
 import app.ferietur.domain.RosterComparisonMode
+import app.ferietur.domain.SafeStorageId
 import app.ferietur.domain.TimeKind
 import app.ferietur.domain.TravelNoticeStatus
 import app.ferietur.domain.WorkBlock
@@ -46,6 +48,9 @@ internal const val PAYMENT_SCENARIO_DISCLAIMER = "Betalingsscenarioet brukes i b
 object PdfExporter {
 
     enum class Variant { SHORT, FULL }
+
+    private const val EXPORT_DIRECTORY_NAME = "exports"
+    private const val EXPORT_MAX_AGE_MILLIS = 24L * 60L * 60L * 1000L
 
     internal data class PdfWorktimeSegment(
         val kind: TimeKind,
@@ -152,29 +157,55 @@ object PdfExporter {
     ): Boolean = period.segments.size == 1
 
     internal fun createBlocking(context: Context, snapshot: FinalizedTripSnapshot, variant: Variant): File {
-        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val dir = File(context.cacheDir, EXPORT_DIRECTORY_NAME).apply { mkdirs() }
+        pruneStaleExports(dir)
         val suffix = if (variant == Variant.FULL) "fullt-grunnlag" else "oppsummering"
+        // SECURITY04: the snapshot ID can originate from an imported backup and is part of a file name.
+        SafeStorageId.requireValid(snapshot.id, "beregnings-ID")
         val file = File(dir, "ferietur-${snapshot.tripStart.toLocalDate()}-${snapshot.id}-$suffix.pdf")
-        val document = PdfDocument()
-        val writer = PdfWriter(document)
         val rateSet = FerieturTariffRates.requireById(snapshot.tariffRateSetId)
+        val document = PdfDocument()
+        try {
+            val writer = PdfWriter(document)
 
-        if (variant == Variant.SHORT) {
-            writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = true)
-        } else {
-            writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = false)
-            writer.pageBreak()
-            writeRosterAndPlan(writer, snapshot)
-            writeCalculationDetails(writer, snapshot, rateSet)
-            writeDayAudit(writer, snapshot)
-            writeGroupedControl(writer, snapshot, rateSet, includeDetails = true)
-            writeSources(writer, snapshot, rateSet)
+            if (variant == Variant.SHORT) {
+                writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = true)
+            } else {
+                writeExecutiveSummary(writer, snapshot, rateSet, includeFooter = false)
+                writer.pageBreak()
+                writeRosterAndPlan(writer, snapshot)
+                writeCalculationDetails(writer, snapshot, rateSet)
+                writeDayAudit(writer, snapshot)
+                writeGroupedControl(writer, snapshot, rateSet, includeDetails = true)
+                writeSources(writer, snapshot, rateSet)
+            }
+
+            writer.finish()
+            FileOutputStream(file).use(document::writeTo)
+        } catch (error: Throwable) {
+            // Never leave a half-written PDF with salary data behind in the share directory.
+            file.delete()
+            throw error
+        } finally {
+            document.close()
         }
-
-        writer.finish()
-        FileOutputStream(file).use(document::writeTo)
-        document.close()
         return file
+    }
+
+    /**
+     * Exported PDFs contain salary data and only need to live long enough to be shared.
+     * Older exports are removed whenever a new one is created.
+     */
+    internal fun pruneStaleExports(
+        directory: File,
+        nowEpochMillis: Long = System.currentTimeMillis(),
+        maxAgeMillis: Long = EXPORT_MAX_AGE_MILLIS,
+    ) {
+        directory
+            .listFiles { file -> file.isFile && file.extension == "pdf" }
+            .orEmpty()
+            .filter { nowEpochMillis - it.lastModified() > maxAgeMillis }
+            .forEach { it.delete() }
     }
 
     fun sharePrepared(context: Context, filePath: String) {
@@ -183,6 +214,8 @@ object PdfExporter {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
             putExtra(Intent.EXTRA_STREAM, uri)
+            // ClipData makes the read grant follow the URI through the chooser to the target app.
+            clipData = ClipData.newUri(context.contentResolver, file.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Del beregningsgrunnlag"))
@@ -752,6 +785,8 @@ object PdfExporter {
         w.summaryLine("Betalingsscenario", payingPartyLabel(s.payingParty))
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
         w.summaryLine("Regler appen bruker", s.ruleBasis)
+        // TIME01: make the wall-clock assumption visible to whoever checks the document.
+        w.summaryLine("Klokkeslett", "Registrert som norsk tid. Tidssoner og sommertidsskifte justeres ikke automatisk.")
         if (s.rosterComparisonMode == RosterComparisonMode.USE_NORMAL_ROSTER) {
             w.summaryLine("Planbasis", workPlanBasisLabelForPdf(s.workPlanBasis))
             if (s.workPlanBasis == TripWorkPlanBasis.EMPLOYER_SET_TRIP_PLAN) {
