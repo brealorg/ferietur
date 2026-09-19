@@ -7,6 +7,7 @@ Start her hvis du vil forstå eller etterprøve appen:
 | --- | --- |
 | Domenemodell og begreper | [FERIETUR01_DOMAIN.md](FERIETUR01_DOMAIN.md) |
 | Tariffkjerne, satssett og lønnstabeller | [TARIFFCORE01.md](TARIFFCORE01.md) |
+| Gjennomregnede eksempler (for hånd, uten kode) | [EKSEMPLER.md](EKSEMPLER.md) |
 | Gjennomgang av beregningene | [A35_CALCULATION_AUDIT.md](A35_CALCULATION_AUDIT.md) |
 | Regelsett 2026.4 og kvalifisering | [EQS01C_RULESET_2026_4_AND_RUNTIME_QUALIFICATION.md](EQS01C_RULESET_2026_4_AND_RUNTIME_QUALIFICATION.md) |
 | Sikkerhetskopi og lokal lagring | [SECURITY03_BACKUP_POLICY.md](SECURITY03_BACKUP_POLICY.md), [UX01_WORKPLAN_AND_LOCAL_BACKUP.md](UX01_WORKPLAN_AND_LOCAL_BACKUP.md) |
