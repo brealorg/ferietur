@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -75,7 +76,9 @@ class UxFix01RuntimeTest {
             compose.onNodeWithText(title).performClick()
             compose.waitUntil(timeoutMillis = UI_TIMEOUT_MS) { nodeExists("Turoversikt") }
 
-            scrollToText("Arbeidsplan")
+            // The overview row was renamed from "Arbeidsplan" to "Arbeid på turen". Navigate by the
+            // stable debug tag instead of by user-facing copy so a wording change cannot break this.
+            scrollToTag("overview-nav-trip-plan")
             compose.onNodeWithTag("overview-nav-trip-plan", useUnmergedTree = true).performClick()
 
             // Prove navigation into the actual work-plan screen before exercising
@@ -131,6 +134,12 @@ class UxFix01RuntimeTest {
         compose.onAllNodesWithTag(tag, useUnmergedTree = true)
             .fetchSemanticsNodes(atLeastOneRootRequired = false)
             .isNotEmpty()
+
+    private fun scrollToTag(tag: String) {
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst()
+            .performScrollToNode(hasTestTag(tag))
+        compose.waitUntil(timeoutMillis = UI_TIMEOUT_MS) { tagExists(tag) }
+    }
 
     private fun scrollToText(text: String) {
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(text))
