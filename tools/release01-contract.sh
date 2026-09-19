@@ -29,11 +29,11 @@ for f in \
 MANIFEST='app/src/main/AndroidManifest.xml'
 GRADLE='app/build.gradle.kts'
 
-[[ "$(head -1 README.md)" == "# Ferietur" ]] || fail 'README_not_canonical'
+# GATE03: README is now a public product page and the version moves with each release.
+# The former assertions on internal README status wording (CA-012/CA-010/schema v6/PLAY01) and
+# on a pinned versionCode/versionName were retired; release/current.env records versions.
+grep -qx '# Ferietur' README.md || fail 'README_not_canonical'
 ! grep -Fq 'A5.4R1' README.md || fail 'README_stale_A54R1'
-grep -Fq 'CA-012 Stage B' README.md || fail 'README_release_trust_state_missing'
-grep -Fq 'schema v6' README.md || fail 'README_schema_v6_missing'
-grep -Fq 'CA-010' README.md || fail 'README_runtime_contract_state_missing'
 
 grep -Fq 'android:icon="@mipmap/ic_launcher"' "$MANIFEST" || fail 'application_icon_missing'
 grep -Fq 'android:roundIcon="@mipmap/ic_launcher_round"' "$MANIFEST" || fail 'round_icon_missing'

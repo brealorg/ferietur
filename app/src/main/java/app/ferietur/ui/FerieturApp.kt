@@ -4413,6 +4413,9 @@ private fun TripPlanScreen(
         derivedPlans = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) derivedPlans else null,
         comparisonBasis = if (fundingMode == FundingMode.TURNUS_PLUS_EXTERNAL) workPlanBasis else null,
         baselinePlans = baselinePlans,
+        // UXFIX01: UxFix01RuntimeTest waits for this tag to prove navigation into the trip
+        // work-plan screen. It was lost when the editor was unified (A58R2).
+        screenModifier = if (BuildConfig.DEBUG) Modifier.testTag("workplan-screen") else Modifier,
         onBack = onBack,
         onEditPeriod = onEditPeriod,
         onAddPeriod = onAddPeriod,
@@ -4435,6 +4438,7 @@ private fun WorkPlanEditorScreen(
     derivedPlans: Map<LocalDate, List<PlannedBlock>>?,
     comparisonBasis: TripWorkPlanBasis? = null,
     baselinePlans: Map<LocalDate, List<PlannedBlock>> = emptyMap(),
+    screenModifier: Modifier = Modifier,
     onBack: () -> Unit,
     onEditPeriod: (LocalDate, Int) -> Unit,
     onAddPeriod: (LocalDate) -> Unit,
@@ -4464,7 +4468,7 @@ private fun WorkPlanEditorScreen(
 
     LazyColumn(
         state = listState,
-        modifier = Modifier
+        modifier = screenModifier
             .fillMaxSize()
             .padding(padding),
         contentPadding = PaddingValues(

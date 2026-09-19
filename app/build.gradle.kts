@@ -32,6 +32,16 @@ android {
                 "proguard-rules.pro",
             )
         }
+        create("staging") {
+            // BUILD03: the release build (R8, shrunk resources) under its own application ID, so a
+            // minified build can be runtime-reviewed next to "Ferietur" and "Ferietur DEV" without
+            // touching real trip data. Debug-signed on purpose: never distribute this variant.
+            initWith(getByName("release"))
+            applicationIdSuffix = ".rc"
+            versionNameSuffix = "-rc"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+        }
     }
 
     compileOptions {

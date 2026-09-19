@@ -29,14 +29,11 @@ INFO='app/src/main/java/app/ferietur/ui/AppInfoContact.kt'
 EXPECTED_CERT='9bc0c2925d6bad3947cbcf6c237d6d085aebf5cb54f67170622ce02f8e8252e7'
 PRIVACY_URL='https://brealorg.github.io/ferietur/privacy/'
 
-[[ "$(head -1 README.md)" == '# Ferietur' ]] || fail 'README_not_canonical'
-grep -Fq 'PLAY01 canonical successor' README.md || fail 'README_play_state_missing'
-grep -Fq 'CA-012 Stage B' README.md || fail 'README_CA012_missing'
-grep -Fq 'schema v6' README.md || fail 'README_schema_v6_missing'
-grep -Fq 'CA-010' README.md || fail 'README_CA010_missing'
+# GATE03: README is now a public product page and the version moves with each release.
+# The former assertions on internal README status wording (CA-012/CA-010/schema v6/PLAY01) and
+# on a pinned versionCode/versionName were retired; release/current.env records versions.
+grep -qx '# Ferietur' README.md || fail 'README_not_canonical'
 
-grep -Eq '^[[:space:]]*versionCode = 52$' "$GRADLE" || fail 'versionCode_not_52'
-grep -Eq '^[[:space:]]*versionName = "0\.5\.5"$' "$GRADLE" || fail 'versionName_not_0_5_5'
 grep -Fq 'applicationId = "app.ferietur"' "$GRADLE" || fail 'application_id_changed'
 grep -Fq 'targetSdk = 37' "$GRADLE" || fail 'target_sdk_regressed'
 grep -Fq 'bundle {' "$GRADLE" || fail 'bundle_block_missing'
@@ -77,8 +74,8 @@ done < <(find . -type f \
 
 printf '%s\n' \
   'PLAY01_APPLICATION_ID=app.ferietur' \
-  'PLAY01_VERSION_CODE=52' \
-  'PLAY01_VERSION_NAME=0.5.5' \
+  "PLAY01_VERSION_CODE=$(sed -n 's/^[[:space:]]*versionCode = \([0-9]*\)$/\1/p' "$GRADLE")" \
+  "PLAY01_VERSION_NAME=$(sed -n 's/^[[:space:]]*versionName = "\(.*\)"$/\1/p' "$GRADLE")" \
   'PLAY01_TARGET_SDK=37' \
   'PLAY01_CA014_LANGUAGE_SPLIT=FIXED' \
   "PLAY01_PRIVACY_POLICY_URL=$PRIVACY_URL" \

@@ -160,7 +160,13 @@ Se [release notes for 0.6.0](https://github.com/brealorg/ferietur/releases/tag/v
 
 ## Kildekode og lisens
 
-Kildekoden er publisert i dette repositoryet. Prosjektet har foreløpig ingen åpen kildekode-lisens, og det gis derfor ikke noen generell lisens til å kopiere, endre eller redistribuere prosjektets egen kildekode.
+Ferietur er fri programvare, lisensiert under [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`).
+
+Du kan bruke, studere, endre og dele koden videre. Deler du en endret versjon, må også den være åpen under samme lisens, slik at beregningene fortsatt kan etterprøves. Programmet leveres uten noen form for garanti – se lisensen for detaljer.
+
+Navnet **Ferietur** og app-ikonet er ikke omfattet av lisensen. En endret versjon som distribueres videre, må bruke et annet navn og ikon, slik at den ikke kan forveksles med denne appen.
+
+Copyright © 2026 brealorg
 
 ## Tilbakemeldinger
 

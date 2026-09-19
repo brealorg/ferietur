@@ -2,9 +2,12 @@
 
 ## Status
 
-Source changes prepared outside the normal build environment. **Not compiled and not run.**
-Before release: run `apply-build-install.sh` (strict build + JVM tests + lint), the Android
-runtime tests, and a manual runtime review of the *minified release APK* (see BUILD02).
+Built and verified 2026-09-19 on the developer machine:
+`testDebugUnitTest lintRelease assembleRelease` with `--offline --dependency-verification=strict`
+passed, and the minified, release-signed APK (2.1 MB) was installed in place over 0.6.0 and
+manually reviewed: start-up with existing library, opening a finalized trip, both PDF variants
+and sharing, `.ferietur` export/import, the Norwegian-time note in step 1 and the DST finding.
+The Android instrumentation tests were not run as part of this review.
 
 No calculation rule, rate, salary table or persisted schema is changed.
 `FERIETUR_RULESET_VERSION` and `SavedTripDraftCodec.SCHEMA_VERSION` are untouched.
@@ -86,14 +89,40 @@ Five assertions no longer matched the published 0.6.0 source and failed before a
 CODEREVIEW01 change was applied: `previousScreen(...)` gained a `workPlanBasis` argument,
 draft schema is 10 (asserted 6), the package ruleset is 2026.4 (asserted 2026.3), the legacy
 pin moved to `LEGACY_DOK25_2026_2028_RULESET_VERSION`, and the snapshot write format is 7
-(asserted 4). They now assert the current values. `tools/source-smoke.sh` still stops at the
-milestone contracts (`release01`, `play01`, `uxfix01`), which are pinned to historical README
-wording and debug tags; those were left alone. Until they are retired from `source-smoke.sh`,
-verify with Gradle directly:
+(asserted 4). They now assert the current values. The milestone contracts that still blocked `tools/source-smoke.sh` are handled in GATE03.
+
+## GATE03 — milestone contracts unpinned, `source-smoke.sh` passes again
+
+`release01-contract.sh` and `play01-contract.sh` asserted internal status wording in README
+(CA-012, CA-010, "schema v6", "PLAY01 canonical successor") and a pinned `versionCode = 52` /
+`versionName = "0.5.5"`. README is now a public product page and versions move per release, so
+those assertions were retired. All other assertions (manifest, backup rules, bundle language
+split, privacy policy, icons, signing hygiene) are kept. `uxfix01-contract.sh` failed for a real
+reason, see UXFIX01R1.
+
+## UXFIX01R1 — restored `workplan-screen` test tag
+
+`UxFix01RuntimeTest` waits for the tag `workplan-screen`, but the tag disappeared when the
+work-plan editor was unified into `WorkPlanEditorScreen`. `TripPlanScreen` now passes a
+debug-only `Modifier.testTag("workplan-screen")` again. Not verified on a device.
+
+## BUILD03 — `staging` build type
+
+`staging` = `release` (R8 + resource shrinking) with `applicationIdSuffix ".rc"`, label
+"Ferietur RC" and debug signing. It installs next to "Ferietur" and "Ferietur DEV", so minified
+builds can be reviewed without touching real trip data:
 
 ```bash
-tools/gradle.sh --offline --dependency-verification=strict testDebugUnitTest lintRelease assembleRelease
+tools/gradle.sh --offline --dependency-verification=strict installStaging
 ```
+
+Never distribute this variant; it is debug-signed.
+
+## LICENSE01 — GPL-3.0-only
+
+`LICENSE` is the verbatim GNU GPL v3 text. README states the licence, the no-warranty position
+and that the name "Ferietur" and the icon are not licensed for modified versions. All runtime
+dependencies are Apache-2.0 and PDF generation uses the platform `PdfDocument`.
 
 ## Deliberately not changed
 
