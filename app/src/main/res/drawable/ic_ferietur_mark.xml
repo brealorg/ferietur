@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- BRAND01: in-app brand mark. The 72dp window a launcher shows of the adaptive icon
+     (viewport 18..90 of the 108dp layers) on a rounded Oslo-yellow tile, so the mark inside the
+     app matches the launcher icon. The suitcase and tag paths are the ic_launcher_foreground
+     paths verbatim; tools/icon02-contract.sh checks that they stay identical. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp"
+    android:height="72dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+
+    <path
+        android:name="brand_tile"
+        android:fillColor="@color/launcher_icon_background"
+        android:pathData="M16,0 H56 C64.84,0 72,7.16 72,16 V56 C72,64.84 64.84,72 56,72 H16 C7.16,72 0,64.84 0,56 V16 C0,7.16 7.16,0 16,0 Z" />
+
+    <group
+        android:name="launcher_window"
+        android:translateX="-18"
+        android:translateY="-18">
+        <group
+            android:name="mark"
+            android:pivotX="54"
+            android:pivotY="57.5"
+            android:scaleX="0.85"
+            android:scaleY="0.85"
+            android:translateY="-3.5">
+
+            <path
+                android:name="suitcase_handle"
+                android:fillColor="@color/launcher_icon_foreground"
+                android:pathData="M43,29 H65 C68,29 70,31 70,34 V40 H64 V36 H44 V40 H38 V34 C38,31 40,29 43,29 Z" />
+
+            <path
+                android:name="suitcase_left_shell"
+                android:fillColor="@color/launcher_icon_foreground"
+                android:pathData="M26,42 H30 V82 H26 C23.2,82 21,79.8 21,77 V47 C21,44.2 23.2,42 26,42 Z" />
+
+            <path
+                android:name="suitcase_right_shell"
+                android:fillColor="@color/launcher_icon_foreground"
+                android:pathData="M78,42 H82 C84.8,42 87,44.2 87,47 V77 C87,79.8 84.8,82 82,82 H78 V42 Z" />
+
+            <path
+                android:name="suitcase_body"
+                android:fillColor="@color/launcher_icon_foreground"
+                android:pathData="M35,40 H73 C74.7,40 76,41.3 76,43 V79 C76,80.7 74.7,82 73,82 H71 V86 H66 V82 H42 V86 H37 V82 H35 C33.3,82 32,80.7 32,79 V43 C32,41.3 33.3,40 35,40 Z" />
+
+            <group
+                android:name="luggage_tag"
+                android:pivotX="67"
+                android:pivotY="40"
+                android:rotation="14">
+
+                <path
+                    android:name="luggage_tag_string"
+                    android:fillColor="#00000000"
+                    android:strokeColor="@color/launcher_icon_tag_string"
+                    android:strokeWidth="1.7"
+                    android:strokeLineCap="round"
+                    android:pathData="M67,39.5 V50" />
+
+                <path
+                    android:name="luggage_tag_label"
+                    android:fillColor="@color/launcher_icon_tag"
+                    android:pathData="M60.25,54.00 L67.00,47.20 L73.75,54.00 L73.75,72.20 C73.75,73.60 72.60,74.70 71.25,74.70 L62.75,74.70 C61.40,74.70 60.25,73.60 60.25,72.20 Z" />
+
+                <path
+                    android:name="luggage_tag_hole"
+                    android:fillColor="@color/launcher_icon_foreground"
+                    android:pathData="M67.00,52.50 C68.05,52.50 68.90,53.35 68.90,54.40 C68.90,55.45 68.05,56.30 67.00,56.30 C65.95,56.30 65.10,55.45 65.10,54.40 C65.10,53.35 65.95,52.50 67.00,52.50 Z" />
+            </group>
+        </group>
+    </group>
+</vector>

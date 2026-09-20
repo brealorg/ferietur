@@ -37,6 +37,26 @@ for f in "$FG" "$MONO"; do
     grep -Fq 'android:translateY="-3.5"' "$f" || fail "safe_zone_centering_missing_${f//[^A-Za-z0-9]/_}"
 done
 
+# BRAND01: the in-app mark and the PDF mark reuse the launcher artwork instead of redrawing it.
+MARK='app/src/main/res/drawable/ic_ferietur_mark.xml'
+PDFMARK='app/src/main/java/app/ferietur/export/PdfBrandMark.kt'
+UI='app/src/main/java/app/ferietur/ui/FerieturApp.kt'
+[ -f "$MARK" ] || fail 'in_app_mark_missing'
+[ -f "$PDFMARK" ] || fail 'pdf_mark_missing'
+python3 - "$FG" "$MARK" <<'PY' || fail 'in_app_mark_paths_differ_from_launcher_foreground'
+import re, sys
+def paths(f):
+    text = open(f, encoding='utf-8').read()
+    return {n: d for n, d in re.findall(r'android:name="([^"]+)"[^>]*?android:pathData="([^"]+)"', text, re.S)}
+fg, mark = paths(sys.argv[1]), paths(sys.argv[2])
+sys.exit(0 if fg and all(mark.get(name) == data for name, data in fg.items()) else 1)
+PY
+grep -Fq 'painterResource(R.drawable.ic_ferietur_mark)' "$UI" || fail 'in_app_mark_not_used'
+if grep -Fq 'OsloIdentityShapes' "$UI"; then fail 'oslo_pattern_shapes_still_in_home_header'; fi
+grep -Fq 'PdfBrandMark.draw(' app/src/main/java/app/ferietur/export/PdfExporter.kt || fail 'pdf_header_mark_not_drawn'
+grep -Fq 'canvas.rotate(14f, 67f, 40f)' "$PDFMARK" || fail 'pdf_mark_tag_rotation_differs_from_drawable'
+grep -Fq 'canvas.scale(0.85f, 0.85f, 54f, 57.5f)' "$PDFMARK" || fail 'pdf_mark_scale_differs_from_drawable'
+
 # No raster launcher assets may appear next to the vectors.
 if find app/src/main/res -path '*mipmap*' \( -name '*.png' -o -name '*.webp' \) | grep -q .; then
     fail 'raster_launcher_asset_present'
@@ -48,4 +68,5 @@ printf '%s\n' \
   'ICON02_LUGGAGE_TAG=OSLO_BLUE_6FE9FF' \
   'ICON02_SAFE_ZONE_SCALE=0.85' \
   'ICON02_MONOCHROME_TAG_CUTOUT=PASS' \
+  'BRAND01_IN_APP_AND_PDF_MARK=PASS' \
   'ICON02_CONTRACT=PASS'

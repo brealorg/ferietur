@@ -2323,7 +2323,9 @@ private class PdfWriter(private val document: PdfDocument) {
         paint.textSize = 7.5f
         paint.typeface = Typeface.DEFAULT
         paint.color = Color.rgb(103, 108, 117)
-        page!!.canvas.drawText("FERIETUR01", left, 23f, paint)
+        // BRAND01: the mark sits in the running header, left of the document code.
+        PdfBrandMark.draw(page!!.canvas, left, 13.4f, 13f)
+        page!!.canvas.drawText("FERIETUR01", left + 18f, 23f, paint)
         val pageText = "Side $pageNo"
         page!!.canvas.drawText(pageText, right - paint.measureText(pageText), 23f, paint)
     }
