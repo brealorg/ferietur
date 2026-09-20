@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="launcher_icon_background">#2A2859</color>
-    <color name="launcher_icon_foreground">#F9C66B</color>
+    <color name="launcher_icon_background">#F9C66B</color>
+    <color name="launcher_icon_foreground">#2A2859</color>
+    <color name="launcher_icon_tag">#6FE9FF</color>
+    <color name="launcher_icon_tag_string">#F8F0DD</color>
 </resources>
