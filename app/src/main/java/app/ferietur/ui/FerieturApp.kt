@@ -9,7 +9,9 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -48,6 +50,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DirectionsCar
@@ -55,6 +58,7 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -142,6 +146,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -156,6 +161,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.ferietur.BuildConfig
+import app.ferietur.R
 import app.ferietur.data.TripRepository
 import app.ferietur.data.TripStorageIssue
 import app.ferietur.data.TripStorageIssueKind
@@ -2263,11 +2269,17 @@ private fun AboutFerieturScreen(
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    "Ferietur",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    FerieturMark(modifier = Modifier.size(40.dp))
+                    Text(
+                        "Ferietur",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 Text(
                     "Hjelpemiddel for planlegging og beregning av arbeid og betaling ved ferieopphold.",
                     style = MaterialTheme.typography.bodyLarge,
@@ -2541,8 +2553,10 @@ private fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
+                            // BRAND01: the save glyph means autosave on this screen; the manual
+                            // export/import card gets its own icon so the two are not confused.
                             Icon(
-                                Icons.Rounded.Save,
+                                Icons.Rounded.Archive,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.secondary,
                             )
@@ -2701,31 +2715,25 @@ private fun HomeScreen(
 
 @Composable
 private fun OsloHomeHeader(onAbout: () -> Unit) {
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        // BRAND01: Ferietur's own mark instead of shapes in Oslo kommune's pattern language,
+        // so the app does not read as a municipal service. Mark and name form one lockup on a
+        // shared centre line; the tagline runs full width underneath.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            FerieturMark(modifier = Modifier.size(48.dp))
             Text(
                 "Ferietur",
+                modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
             )
-            Text(
-                "Beregn ferietur uten Excel.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            OsloIdentityShapes(modifier = Modifier.size(60.dp))
             IconButton(
                 onClick = onAbout,
                 modifier = Modifier.size(48.dp),
@@ -2737,37 +2745,22 @@ private fun OsloHomeHeader(onAbout: () -> Unit) {
                 )
             }
         }
+        Text(
+            "Beregn ferietur uten Excel.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
+/** BRAND01: the launcher icon's artwork on its yellow tile; decorative, so no description. */
 @Composable
-private fun OsloIdentityShapes(modifier: Modifier = Modifier) {
-    val primaryContainer = MaterialTheme.colorScheme.primaryContainer
-    val secondary = MaterialTheme.colorScheme.secondary
-    val primary = MaterialTheme.colorScheme.primary
-    Canvas(modifier = modifier) {
-        val cell = size.minDimension / 3.0f
-        drawRect(
-            color = primaryContainer,
-            topLeft = Offset(0f, cell * 0.15f),
-            size = Size(cell, cell),
-        )
-        drawRect(
-            color = secondary,
-            topLeft = Offset(cell, cell * 1.15f),
-            size = Size(cell, cell),
-        )
-        drawRect(
-            color = primaryContainer,
-            topLeft = Offset(cell * 2f, cell * 1.15f),
-            size = Size(cell, cell),
-        )
-        drawCircle(
-            color = primary,
-            radius = cell * 0.48f,
-            center = Offset(cell * 2.45f, cell * 0.62f),
-        )
-    }
+private fun FerieturMark(modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.ic_ferietur_mark),
+        contentDescription = null,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -3432,13 +3425,10 @@ private fun CalculationMethodScreen(
 
         if (normalSalarySelected) {
             item {
-                MethodFormSection(title = "Hvilken arbeidsplan har arbeidsgiver fastsatt?") {
-                    Text(
-                        "Velg hva arbeidsgiver faktisk har bestemt. En arbeidsfordeling de ansatte lager seg imellom på turen regnes ikke automatisk som en egen arbeidsplan fra arbeidsgiver.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
+                MethodFormSection(
+                    title = "Hvilken arbeidsplan har arbeidsgiver fastsatt?",
+                    supporting = "Velg hva arbeidsgiver faktisk har bestemt. En arbeidsfordeling de ansatte lager seg imellom på turen regnes ikke automatisk som en egen arbeidsplan fra arbeidsgiver.",
+                ) {
                     MethodRadioRow(
                         selected = workPlanBasis == TripWorkPlanBasis.NORMAL_ROSTER_APPLIES,
                         title = "Vanlig grunnturnus gjelder",
@@ -3635,10 +3625,20 @@ private fun CalculationMethodScreen(
 @Composable
 private fun MethodFormSection(
     title: String,
+    supporting: String? = null,
     content: @Composable () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         MethodSectionHeading(title)
+        // UXFIX02: helper text belongs under the heading, outside the rounded card; inside the
+        // card it had no padding and its first letter was clipped by the corner.
+        supporting?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium,
@@ -6760,6 +6760,19 @@ private fun compactControlFinding(
         }
     }
 
+    ControlFindingPresentationPolicy.SEVEN_DAY_TITLE -> {
+        val window = ControlFindingPresentationPolicy.sevenDayWindow(finding.detail)
+        if (window != null) {
+            CompactControlFinding(
+                primary = "${window.hours} på sju dager",
+                secondary = "${compactControlDateTime(window.start)} → ${compactControlDateTime(window.end)}",
+                checkText = "Grensen kan i noen arbeidstidsordninger gjennomsnittsberegnes. Husk arbeid før og etter turen.",
+            )
+        } else {
+            genericCompactControlFinding(finding)
+        }
+    }
+
     "Mer enn 48 timer i den viste perioden" -> {
         val registered = finding.detail
             .substringAfter("Du har registrert ")
@@ -6830,6 +6843,8 @@ private fun controlGroupDescription(
         "Sammenhengende arbeidsperioder over 13 timer."
     "Mer enn 48 timer i den viste perioden" ->
         "Samlet registrert arbeidstid i perioden."
+    ControlFindingPresentationPolicy.SEVEN_DAY_TITLE ->
+        "Høyeste registrerte arbeidstid i løpet av sju dager."
     else ->
         "Konkrete kontrollpunkter fra den registrerte arbeidsplanen."
 }
@@ -9814,30 +9829,50 @@ private fun ScreenHeader(title: String, stepLabel: String, onBack: () -> Unit) {
     }
 }
 
+/**
+ * SAVEUI01: autosave is the normal case, so the normal case is quiet and is a status, not a
+ * button: a dimmed check when the draft is saved, the save glyph in the primary colour while a
+ * save is in flight (the tint fades and follows the system animation scale). Only a failed save
+ * is an action — warning icon, text and error colour, tap to retry — because that is the one
+ * state the user must not miss and the only one where saving by hand does anything.
+ */
 @Composable
 private fun SaveStatusAction(saveUi: SaveUiState) {
-    val label = when (saveUi.state) {
-        DraftSaveState.SAVED -> "Lagret"
-        DraftSaveState.SAVING -> "Lagrer…"
-        DraftSaveState.ERROR -> "Ikke lagret"
-    }
-    val tint = when (saveUi.state) {
-        DraftSaveState.SAVED -> MaterialTheme.colorScheme.primary
-        DraftSaveState.SAVING -> MaterialTheme.colorScheme.onSurfaceVariant
-        DraftSaveState.ERROR -> MaterialTheme.colorScheme.error
-    }
-    TextButton(
-        onClick = saveUi.onSave,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-    ) {
-        Icon(
-            imageVector = if (saveUi.state == DraftSaveState.ERROR) Icons.Rounded.Warning else Icons.Rounded.Save,
-            contentDescription = if (saveUi.state == DraftSaveState.ERROR) "Prøv å lagre på nytt" else "Lagre nå",
-            tint = tint,
-            modifier = Modifier.size(18.dp),
+    if (saveUi.state == DraftSaveState.ERROR) {
+        TextButton(
+            onClick = saveUi.onSave,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Warning,
+                contentDescription = "Prøv å lagre på nytt",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Ikke lagret",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 1,
+            )
+        }
+    } else {
+        val saving = saveUi.state == DraftSaveState.SAVING
+        val tint by animateColorAsState(
+            targetValue = if (saving) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+            },
+            label = "save-status-tint",
         )
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
+        Icon(
+            imageVector = if (saving) Icons.Rounded.Save else Icons.Rounded.Check,
+            contentDescription = if (saving) "Lagrer utkastet" else "Utkastet er lagret",
+            tint = tint,
+            modifier = Modifier.padding(horizontal = 14.dp).size(20.dp),
+        )
     }
 }
 

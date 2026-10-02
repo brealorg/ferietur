@@ -15,6 +15,7 @@ Start her hvis du vil forstå eller etterprøve appen:
 | Avhengighetsvalg | [ADR01_DEPENDENCY_DECISIONS.md](ADR01_DEPENDENCY_DECISIONS.md) |
 | Release-flyt | [RELEASE_WORKFLOW.md](RELEASE_WORKFLOW.md) |
 | Herding etter ekstern kodegjennomgang | [CODEREVIEW01_HARDENING.md](CODEREVIEW01_HARDENING.md) |
+| Appikon og merke i app og PDF | [ICON02_LUGGAGE_TAG.md](ICON02_LUGGAGE_TAG.md), [BRAND01_IN_APP_MARK.md](BRAND01_IN_APP_MARK.md) |
 
 Personvernerklæringen som publiseres på GitHub Pages ligger i [privacy/](privacy/).
 Eldre, pensjonerte gates og sjekksummer ligger i [audit-history/](audit-history/).

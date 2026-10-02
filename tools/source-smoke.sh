@@ -9,6 +9,7 @@ cd "$ROOT"
 "$ROOT/tools/release01-contract.sh"
 "$ROOT/tools/play01-contract.sh"
 "$ROOT/tools/uxfix01-contract.sh"
+"$ROOT/tools/icon02-contract.sh"
 
 printf '%s\n' \
   "ACTIVE_SOURCE_GATE_MODEL=SUCCESSOR_SEMANTIC" \
