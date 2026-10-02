@@ -78,6 +78,24 @@ class AppChangelogTest {
     }
 
     @Test
+    fun upgradeFrom55SeesOnlyRelease56AndItClaimsNoCalculationChanges() {
+        assertEquals(
+            listOf(56),
+            AppChangelog.releasesAfter(lastAcknowledgedVersionCode = 55, currentVersionCode = 56)
+                .map { it.versionCode },
+        )
+        assertEquals(
+            listOf(54, 55, 56),
+            AppChangelog.releasesAfter(lastAcknowledgedVersionCode = 53, currentVersionCode = 56)
+                .map { it.versionCode },
+        )
+        val release = requireNotNull(AppChangelog.releaseForVersion(56))
+        assertEquals("0.6.2", release.versionName)
+        assertTrue(release.changes.none { it.severity == ChangeSeverity.CALCULATION_CHANGE })
+        assertTrue(release.intro.contains("endrer ingen beregninger"))
+    }
+
+    @Test
     fun versionCodesAreUnique() {
         val codes = AppChangelog.releases.map { it.versionCode }
         assertEquals(codes.distinct(), codes)

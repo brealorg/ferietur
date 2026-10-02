@@ -46,6 +46,29 @@ this track. The temporary Play-signed-universal-APK detour is not mandatory.
    production access and actual rollout.
 6. Check app-signing identity on distributed APKs before cross-channel update claims.
 
+## Build environment: cold Gradle cache
+
+The release chain runs Gradle with `--offline --dependency-verification=strict`. Gradle prunes
+`~/.gradle/caches/modules-2` on its own (entries unused for a while, or after another tool has
+used the same Gradle home), and a pruned cache fails with
+`No cached version of <artifact> available for offline mode`. That message means the cache is
+cold, not that the project changed.
+
+1. Rebuild the cache online, with verification still strict, for every task the chain uses:
+   `tools/gradle.sh --dependency-verification=strict testDebugUnitTest lintRelease
+   assembleDebug assembleRelease assembleDebugAndroidTest bundleRelease`.
+2. If that fails on `Dependency verification failed` for BOM, `-parent` POM or `.module`
+   files, a cold resolution read metadata the warm cache never needed. Run the same tasks with
+   `--write-verification-metadata sha256`, then inspect
+   `git diff gradle/verification-metadata.xml`: no existing `<sha256>` line may change or
+   disappear, and every new component must be a BOM, parent POM or `.module` file. Anything
+   else stops the release until it is explained.
+3. Run `tools/generate-source-sha256.sh`, then `./apply-build-install.sh`, and commit the
+   metadata and manifest together.
+
+Never answer a cold cache by disabling verification or by deleting
+`gradle/verification-metadata.xml`.
+
 ## Coordination and recovery
 
 - Both tracks share recorded source/version but may have different external blockers.

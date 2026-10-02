@@ -28,6 +28,43 @@ internal enum class UpdatePromptAction {
 internal object AppChangelog {
     val releases: List<AppReleaseNotes> = listOf(
         AppReleaseNotes(
+            versionCode = 56,
+            versionName = "0.6.2",
+            intro =
+                "Denne versjonen endrer ingen beregninger. Ferietur har fått nytt ikon og eget " +
+                    "merke, og lagringsstatusen i veiviseren er gjort roligere.",
+            changes = listOf(
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Nytt appikon",
+                    detail =
+                        "Kofferten har fått en bagasjelapp og står på gul bakgrunn. Ikonet passer " +
+                            "nå innenfor runde ikonmasker, og den tematiserte varianten er oppdatert.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Ferieturs eget merke",
+                    detail =
+                        "Merket vises på forsiden, under Om Ferietur og i toppen av PDF-ene, i stedet " +
+                            "for grafikk som kunne forveksles med Oslo kommune.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Roligere lagringsstatus",
+                    detail =
+                        "Utkast lagres fortsatt automatisk. Når alt er lagret, vises bare en liten hake. " +
+                            "Skulle lagringen feile, vises det tydelig, og du kan prøve på nytt.",
+                ),
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Småretting i steg 2 og 8",
+                    detail =
+                        "Hjelpeteksten om arbeidsplan klippes ikke lenger, og varselet om mer enn " +
+                            "48 timer på sju dager viser timer og periode i stedet for å gjenta tittelen.",
+                ),
+            ),
+        ),
+        AppReleaseNotes(
             versionCode = 55,
             versionName = "0.6.1",
             intro =

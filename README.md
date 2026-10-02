@@ -6,7 +6,7 @@
 
 **Planlegging, beregning og dokumentasjon for ferieturer der ansatte følger med.**
 
-**Gjeldende kildekode:** `0.6.1` (`versionCode 55`) · **Siste publiserte APK:** `0.6.1` (`versionCode 55`)
+**Gjeldende kildekode:** `0.6.2` (`versionCode 56`) · **Siste publiserte APK:** `0.6.1` (`versionCode 55`)
 
 [![Release](https://img.shields.io/badge/release-0.6.1-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.6.1)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-F9C66B?style=flat-square&logo=android&logoColor=2A2859)
@@ -16,6 +16,8 @@
 ## [⬇ Last ned Ferietur 0.6.1](https://github.com/brealorg/ferietur/releases/download/v0.6.1/Ferietur-0.6.1.apk)
 
 **Android APK · Android 8.0 eller nyere**
+
+[**▶ Hent Ferietur på Google Play**](https://play.google.com/store/apps/details?id=app.ferietur)
 
 [Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.1) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
@@ -108,7 +110,7 @@ Har du allerede Ferietur installert, kan `0.6.1` installeres direkte over en tid
 
 [Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.1) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
 
-> Google Play-versjonen er i closed testing. Den direkte signerte APK-en publiseres parallelt for manuell installasjon og oppdatering.
+> Ferietur er også tilgjengelig på [Google Play](https://play.google.com/store/apps/details?id=app.ferietur) (Norge). Den direkte signerte APK-en publiseres parallelt for manuell installasjon og oppdatering. De to sporene har ulik signeringsidentitet og kan ikke oppdatere hverandre; velg ett spor per enhet.
 
 <details>
 <summary><strong>Verifiser APK og signeringsidentitet</strong></summary>
@@ -157,7 +159,7 @@ Se [release notes for 0.6.1](https://github.com/brealorg/ferietur/releases/tag/v
 | Signert Android APK | ✅ Publisert |
 | Permanent update-signatur | ✅ Etablert |
 | Lokal lagring / PDF | ✅ Produksjon |
-| Google Play | ⏳ Produksjonstilgang og upload-key-oppdatering under behandling |
+| Google Play | ✅ Publisert i produksjon (Norge) |
 | Kildekodepublisering | ✅ Publisert |
 
 ## Kildekode og lisens
