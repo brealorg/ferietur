@@ -46,7 +46,9 @@ text = text[:section.start()] + "\0NOTES\0" + text[section.end():]
 text = text.replace(old_sha.group(1), new_sha)
 text = text.replace(old_name, new_name)
 text = text.replace(f"versionCode {old_code}", f"versionCode {new_code}")
-text = text.replace(old_name.replace(".", ""), new_name.replace(".", ""))  # heading anchors
+# Heading anchors only: a bare "062" -> "063" also rewrote the signing-certificate hash.
+old_anchor, new_anchor = old_name.replace(".", ""), new_name.replace(".", "")
+text = re.sub(r"\(#[^)\s]*\)", lambda m: m.group(0).replace(old_anchor, new_anchor), text)
 text = text.replace("\0NOTES\0", notes)
 readme.write_text(text, encoding="utf-8")
 print(f"README_PUBLISHED_RELEASE={new_name}")

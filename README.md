@@ -6,20 +6,20 @@
 
 **Planlegging, beregning og dokumentasjon for ferieturer der ansatte følger med.**
 
-**Gjeldende kildekode:** `0.6.3` (`versionCode 57`) · **Siste publiserte APK:** `0.6.2` (`versionCode 56`)
+**Gjeldende kildekode:** `0.6.3` (`versionCode 57`) · **Siste publiserte APK:** `0.6.3` (`versionCode 57`)
 
-[![Release](https://img.shields.io/badge/release-0.6.2-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.6.2)
+[![Release](https://img.shields.io/badge/release-0.6.3-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.6.3)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-F9C66B?style=flat-square&logo=android&logoColor=2A2859)
 ![Package](https://img.shields.io/badge/package-app.ferietur-2A2859?style=flat-square)
 ![Data](https://img.shields.io/badge/data-local_only-F9C66B?style=flat-square)
 
-## [⬇ Last ned Ferietur 0.6.2](https://github.com/brealorg/ferietur/releases/download/v0.6.2/Ferietur-0.6.2.apk)
+## [⬇ Last ned Ferietur 0.6.3](https://github.com/brealorg/ferietur/releases/download/v0.6.3/Ferietur-0.6.3.apk)
 
 **Android APK · Android 8.0 eller nyere**
 
 [**▶ Hent Ferietur på Google Play**](https://play.google.com/store/apps/details?id=app.ferietur)
 
-[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.2) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
+[Release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.3) · [Personvern](https://brealorg.github.io/ferietur/privacy/) · [Rapporter en feil](https://github.com/brealorg/ferietur/issues)
 
 </div>
 
@@ -100,15 +100,15 @@ Ferietur er laget for lokal bruk:
 
 ## Last ned Ferietur
 
-### Android APK — 0.6.2
+### Android APK — 0.6.3
 
-[**⬇ Last ned Ferietur-0.6.2.apk**](https://github.com/brealorg/ferietur/releases/download/v0.6.2/Ferietur-0.6.2.apk)
+[**⬇ Last ned Ferietur-0.6.3.apk**](https://github.com/brealorg/ferietur/releases/download/v0.6.3/Ferietur-0.6.3.apk)
 
-**Android 8.0 eller nyere (API 26+)** · `versionCode 56` · permanent signert produksjonsutgave
+**Android 8.0 eller nyere (API 26+)** · `versionCode 57` · permanent signert produksjonsutgave
 
-Har du allerede Ferietur installert, kan `0.6.2` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
+Har du allerede Ferietur installert, kan `0.6.3` installeres direkte over en tidligere versjon med samme permanente signeringsidentitet. Lagrede turer og utkast beholdes ved vanlig oppdatering.
 
-[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.2) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
+[Se release notes](https://github.com/brealorg/ferietur/releases/tag/v0.6.3) · [Se alle releases](https://github.com/brealorg/ferietur/releases)
 
 > Ferietur er også tilgjengelig på [Google Play](https://play.google.com/store/apps/details?id=app.ferietur) (Norge). Den direkte signerte APK-en publiseres parallelt for manuell installasjon og oppdatering. De to sporene har ulik signeringsidentitet og kan ikke oppdatere hverandre; velg ett spor per enhet.
 
@@ -118,7 +118,7 @@ Har du allerede Ferietur installert, kan `0.6.2` installeres direkte over en tid
 ### APK SHA-256
 
 ```text
-2e50c92996f1ab562b39fa816cbd6262413bf92ba07e34048903e8cbf1bd4972
+2407e9ed62e00699c11d8688dd5198ba81f18d08f5dd79eba62344b6af8ee5e4
 ```
 
 ### Permanent signeringssertifikat SHA-256
@@ -131,38 +131,35 @@ Checksum og sertifikatfingeravtrykk ligger også som egne filer i releasen.
 
 </details>
 
-## Release 0.6.2
+## Release 0.6.3
 
-`0.6.2` er en utseende- og vedlikeholdsutgave. **Ingen beregninger er endret.**
+`0.6.3` er en liten tekstoppdatering. **Ingen beregninger er endret.**
+
+Bakgrunn: Helseetaten har svart skriftlig (ref. 26/2867-3, 01.10.2026) om rutinen «Ledsaging på reiser» (EQS ID 53398). Rutinen er veiledende, og praksis bestemmes av den enkelte bydel.
 
 Blant endringene:
 
-- nytt appikon: kofferten har fått en bagasjelapp og står på Oslo gul; ikonet holder seg innenfor sikkerhetssonen for runde ikonmasker, og den tematiserte varianten er oppdatert
-- Ferieturs eget merke vises på forsiden, under «Om Ferietur» og i toppen av hver PDF-side, i stedet for grafikk i Oslo kommunes mønsterspråk
-- roligere lagringsstatus i veiviseren: en liten hake når utkastet er lagret, tydelig varsel og «prøv på nytt» bare når lagring feiler
-- hjelpeteksten om arbeidsplan i steg 2 klippes ikke lenger av kortets hjørne
-- varselet om mer enn 48 timer på sju dager viser timer og periode i stedet for å gjenta tittelen
-- `gradle/verification-metadata.xml` dekker nå oppslagsfilene en tom Gradle-cache leser, slik at CI og en nyinstallert maskin bygger uten manuelle tillegg
+- «Lønn og betaling» sier nå at reise, kost og losji for den ansatte ikke er med i betalingsforslaget
+- ny «Mer om dette»-dialog under betalingsforslaget oppsummerer Helseetatens svar om kostnadsfordelingen og minner om at praksis kan variere mellom bydelene
+- PDF-en har samme setning ved betalingsscenarioet og oppgir EQS ID 53398 og Helseetatens svar som kilde for kostnadsfordelingen; tariffreglene har fortsatt Dok. 25 som kilde
+- eksisterende ansvarsfraskrivelse er uendret: Ferietur fastsetter ikke hvem som rettslig skal bære kostnaden
 
-Bakgrunn og detaljer står i [docs/ICON02_LUGGAGE_TAG.md](docs/ICON02_LUGGAGE_TAG.md) og [docs/BRAND01_IN_APP_MARK.md](docs/BRAND01_IN_APP_MARK.md).
+Døgnkompensasjon er ikke omtalt i Helseetatens svar og er fortsatt ikke en del av beregningen.
 
 Den direkte APK-en beholder Ferieturs permanente signeringsidentitet og installeres over tidligere versjoner med bevart appdata.
 
 Google Play-sporet håndteres separat.
 
-Se [release notes for 0.6.2](https://github.com/brealorg/ferietur/releases/tag/v0.6.2) for den publiserte releasepakken.
+Se [release notes for 0.6.3](https://github.com/brealorg/ferietur/releases/tag/v0.6.3) for den publiserte releasepakken.
 
 ### Google Play release notes (no-NO)
-
-Lim inn i Play Console nøyaktig slik, taggene inkludert (ca. 300 tegn, grensen er 500):
 
 ```
 <no-NO>
 Ingen beregninger er endret.
 
-• Nytt appikon og eget Ferietur-merke i appen og i PDF-ene
-• Roligere lagringsstatus: en liten hake når alt er lagret, tydelig varsel bare hvis lagring feiler
-• Småretting i steg 2 og 8
+• Tydeligere at reise, kost og losji for den ansatte ikke er med i betalingsforslaget
+• «Mer om dette» under betalingsforslaget oppsummerer Helseetatens svar om kostnadsfordelingen
 
 Ferietur er et uavhengig hjelpeverktøy og ikke en offisiell tjeneste fra Oslo kommune.
 </no-NO>
