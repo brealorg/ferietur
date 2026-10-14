@@ -11,8 +11,8 @@ android {
         applicationId = "app.ferietur"
         minSdk = 26
         targetSdk = 37
-        versionCode = 56
-        versionName = "0.6.2"
+        versionCode = 57
+        versionName = "0.6.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

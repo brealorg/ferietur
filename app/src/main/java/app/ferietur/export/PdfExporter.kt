@@ -44,6 +44,8 @@ import java.util.Locale
 
 private val NORWEGIAN_LOCALE = Locale.forLanguageTag("nb-NO")
 internal const val PAYMENT_SCENARIO_DISCLAIMER = "Betalingsscenarioet brukes i betalingsforslaget og dokumentasjonen. Det endrer ikke selve beregningen og fastsetter ikke hvem som rettslig skal bære kostnaden."
+internal const val TRAVEL_EXPENSES_EXCLUDED_NOTE = "Reise, kost og losji for den ansatte er ikke med i betalingsforslaget."
+internal const val COST_SPLIT_SOURCE = "Kilde for kostnadsfordelingen: Oslo kommune EQS ID 53398, rev. 1.2 (veiledende rutine) · Helseetatens svar, ref. 26/2867-3, 01.10.2026."
 
 object PdfExporter {
 
@@ -278,6 +280,7 @@ object PdfExporter {
             }
         }
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
+        w.smallText(TRAVEL_EXPENSES_EXCLUDED_NOTE)
 
         when {
             s.rosterComparisonMode != RosterComparisonMode.USE_NORMAL_ROSTER ->
@@ -784,6 +787,8 @@ object PdfExporter {
         w.summaryLine("Arbeidsgiver", employerLabel(s.employerKind))
         w.summaryLine("Betalingsscenario", payingPartyLabel(s.payingParty))
         w.smallText(PAYMENT_SCENARIO_DISCLAIMER)
+        w.smallText(TRAVEL_EXPENSES_EXCLUDED_NOTE)
+        w.footerMeta(COST_SPLIT_SOURCE)
         w.summaryLine("Regler appen bruker", s.ruleBasis)
         // TIME01: make the wall-clock assumption visible to whoever checks the document.
         w.summaryLine("Klokkeslett", "Registrert som norsk tid. Tidssoner og sommertidsskifte justeres ikke automatisk.")

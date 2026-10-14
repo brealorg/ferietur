@@ -219,6 +219,7 @@ import app.ferietur.domain.ruleBasisLabel
 import app.ferietur.domain.toFundingMode
 import app.ferietur.export.PdfExportRepository
 import app.ferietur.export.PdfExporter
+import app.ferietur.export.TRAVEL_EXPENSES_EXCLUDED_NOTE
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
@@ -3182,6 +3183,14 @@ private fun employerLabel(value: EmployerKind): String = when (value) {
     EmployerKind.UNSPECIFIED -> "Må velges"
 }
 
+internal const val COST_SPLIT_INFO_SOURCE = "Helseetaten (ref. 26/2867-3, 01.10.2026)"
+internal const val COST_SPLIT_INFO_BODY =
+    "Tjenesten dekker lønn tilsvarende vedtaket, inkludert tillegg. Reise, kost og losji dekkes av " +
+        "den som ønsker ledsaging. Rutine 53398 er veiledende, og praksis kan variere mellom bydelene – " +
+        "sjekk med egen bydel."
+internal const val COST_SPLIT_INFO_DISCLAIMER =
+    "Ferietur fastsetter ikke hvem som rettslig skal bære kostnaden."
+
 private fun payingPartyLabel(value: PayingParty): String = when (value) {
     PayingParty.OSLO_KOMMUNE -> "Oslo kommune"
     PayingParty.RESIDENT_OR_GUARDIAN -> "Beboer/verge"
@@ -3345,6 +3354,7 @@ private fun CalculationMethodScreen(
     var paymentMenuOpen by remember { mutableStateOf(false) }
     var employerMenuOpen by remember { mutableStateOf(false) }
     var showRuleInfo by remember { mutableStateOf(false) }
+    var showCostSplitInfo by remember { mutableStateOf(false) }
 
     val paymentLabel = when (payingParty) {
         PayingParty.RESIDENT_OR_GUARDIAN -> "Beboer eller verge"
@@ -3386,6 +3396,33 @@ private fun CalculationMethodScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showRuleInfo = false }) { Text("Lukk") }
+            },
+        )
+    }
+
+    if (showCostSplitInfo) {
+        AlertDialog(
+            onDismissRequest = { showCostSplitInfo = false },
+            icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+            title = { Text("Kostnadsfordeling på turen") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        COST_SPLIT_INFO_SOURCE,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        COST_SPLIT_INFO_BODY,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        COST_SPLIT_INFO_DISCLAIMER,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCostSplitInfo = false }) { Text("Lukk") }
             },
         )
     }
@@ -3565,6 +3602,17 @@ private fun CalculationMethodScreen(
                         onPayingParty(PayingParty.UNSPECIFIED)
                         paymentMenuOpen = false
                     }
+                }
+                Text(
+                    TRAVEL_EXPENSES_EXCLUDED_NOTE,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = { showCostSplitInfo = true },
+                    contentPadding = PaddingValues(horizontal = 0.dp),
+                ) {
+                    Text("Mer om dette")
                 }
             }
         }

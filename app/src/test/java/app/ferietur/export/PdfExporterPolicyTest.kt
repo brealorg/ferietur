@@ -3,6 +3,7 @@ package app.ferietur.export
 import app.ferietur.domain.CalculationCertainty
 import app.ferietur.domain.CalculationLine
 import app.ferietur.domain.PaymentTreatment
+import app.ferietur.domain.FerieturRules
 import app.ferietur.domain.FerieturTariffRates
 import app.ferietur.domain.RosterComparisonMode
 import app.ferietur.domain.TimeKind
@@ -192,6 +193,22 @@ class PdfExporterPolicyTest {
             "Betalingsscenarioet brukes i betalingsforslaget og dokumentasjonen. Det endrer ikke selve beregningen og fastsetter ikke hvem som rettslig skal bære kostnaden.",
             PAYMENT_SCENARIO_DISCLAIMER,
         )
+    }
+
+    @Test
+    fun costSplitTextsExcludeTravelExpensesWithoutChangingTariffSources() {
+        assertEquals(
+            "Reise, kost og losji for den ansatte er ikke med i betalingsforslaget.",
+            TRAVEL_EXPENSES_EXCLUDED_NOTE,
+        )
+        assertTrue(COST_SPLIT_SOURCE.contains("EQS ID 53398"))
+        assertTrue(COST_SPLIT_SOURCE.contains("ref. 26/2867-3, 01.10.2026"))
+        assertFalse(COST_SPLIT_SOURCE.contains("Dok. 25"))
+        listOf(TRAVEL_EXPENSES_EXCLUDED_NOTE, COST_SPLIT_SOURCE).forEach { text ->
+            assertFalse(text.contains("Personalhåndbok", ignoreCase = true))
+            assertFalse(text.contains("døgnkompensasjon", ignoreCase = true))
+        }
+        assertTrue(FerieturRules.rules.none { it.source.contains("26/2867-3") })
     }
 
     @Test

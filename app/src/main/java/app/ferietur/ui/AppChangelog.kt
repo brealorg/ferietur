@@ -28,6 +28,23 @@ internal enum class UpdatePromptAction {
 internal object AppChangelog {
     val releases: List<AppReleaseNotes> = listOf(
         AppReleaseNotes(
+            versionCode = 57,
+            versionName = "0.6.3",
+            intro =
+                "Denne versjonen endrer ingen beregninger. Den forklarer bedre hva " +
+                    "betalingsforslaget omfatter, etter svar fra Helseetaten.",
+            changes = listOf(
+                AppChange(
+                    severity = ChangeSeverity.NORMAL,
+                    title = "Tydeligere betalingsforslag",
+                    detail =
+                        "Under «Lønn og betaling» og i PDF-en står det nå at reise, kost og losji for " +
+                            "den ansatte ikke er med i betalingsforslaget. «Mer om dette» viser kort hva " +
+                            "Helseetaten har svart om kostnadsfordelingen.",
+                ),
+            ),
+        ),
+        AppReleaseNotes(
             versionCode = 56,
             versionName = "0.6.2",
             intro =
