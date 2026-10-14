@@ -6,7 +6,7 @@
 
 **Planlegging, beregning og dokumentasjon for ferieturer der ansatte følger med.**
 
-**Gjeldende kildekode:** `0.6.2` (`versionCode 56`) · **Siste publiserte APK:** `0.6.2` (`versionCode 56`)
+**Gjeldende kildekode:** `0.6.3` (`versionCode 57`) · **Siste publiserte APK:** `0.6.2` (`versionCode 56`)
 
 [![Release](https://img.shields.io/badge/release-0.6.2-2A2859?style=flat-square)](https://github.com/brealorg/ferietur/releases/tag/v0.6.2)
 ![Android](https://img.shields.io/badge/Android-8.0%2B-F9C66B?style=flat-square&logo=android&logoColor=2A2859)
